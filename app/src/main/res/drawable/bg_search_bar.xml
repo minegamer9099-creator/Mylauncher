@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Search bar: halka glass fill + border. Border ka color PaletteEngine se badalta hai. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#22FFFFFF" />
+    <stroke
+        android:width="2dp"
+        android:color="#CCFFFFFF" />
+    <corners android:radius="24dp" />
+</shape>

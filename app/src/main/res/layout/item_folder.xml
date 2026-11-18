@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Folder ka cell: glass tile (andar 3x3 mini icons) + naam -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="96dp"
+    android:gravity="center"
+    android:orientation="vertical">
+
+    <com.example.mylauncher.FolderTileView
+        android:id="@+id/folderTile"
+        android:layout_width="56dp"
+        android:layout_height="56dp" />
+
+    <TextView
+        android:id="@+id/folderName"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="7dp"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:maxLines="1"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp"
+        android:shadowColor="#80000000"
+        android:shadowDx="0"
+        android:shadowDy="1"
+        android:shadowRadius="3"
+        android:textColor="#FFFFFF"
+        android:textSize="11sp" />
+</LinearLayout>

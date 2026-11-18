@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Search widget: home grid mein poori row. Drag karke kahin bhi rakh sakte ho (edit mode mein). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="96dp">
+
+    <LinearLayout
+        android:id="@+id/searchPill"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_gravity="center"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="18dp"
+        android:paddingEnd="6dp">
+
+        <ImageView
+            android:id="@+id/searchIcon"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="@null"
+            android:src="@drawable/ic_search" />
+
+        <TextView
+            android:id="@+id/searchLabel"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:text="Search"
+            android:textSize="15sp" />
+
+        <ImageView
+            android:id="@+id/searchMic"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Voice search"
+            android:padding="9dp"
+            android:src="@drawable/ic_mic" />
+    </LinearLayout>
+</FrameLayout>
