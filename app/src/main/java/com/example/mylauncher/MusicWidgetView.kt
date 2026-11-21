@@ -34,8 +34,6 @@ class MusicWidgetView @JvmOverloads constructor(
 
     private var controller: MediaController? = null
     private var sessionManager: MediaSessionManager? = null
-    private var accessDenied = false
-    private var appliedStrength = Float.NaN
 
     var glassStrength: Float = 0.5f
         set(value) {
@@ -91,11 +89,15 @@ class MusicWidgetView @JvmOverloads constructor(
         }
     }
 
+    private var appliedTint = GlassTheme.tint
+
+    fun refreshGlass() {
+        if (appliedTint != GlassTheme.tint) applyGlass()
+    }
+
     private fun applyGlass() {
-        val strength = if (lightStyle) 0.55f else glassStrength
-        if (strength == appliedStrength) return // pehle se yahi glass laga hai
-        appliedStrength = strength
-        background = LiquidGlassDrawable(24f * density, strength)
+        appliedTint = GlassTheme.tint
+        background = LiquidGlassDrawable(24f * density, if (lightStyle) 0.55f else glassStrength)
     }
 
     private fun applyColors() {
@@ -137,12 +139,10 @@ class MusicWidgetView @JvmOverloads constructor(
             sessionManager = msm
             msm.addOnActiveSessionsChangedListener(sessionListener, listenerComponent)
             bindController(msm.getActiveSessions(listenerComponent))
-            accessDenied = false
             setOnClickListener(null)
             isClickable = false
         } catch (e: SecurityException) {
             // Notification access abhi allow nahi hua
-            accessDenied = true
             title.text = "Music controls ke liye access allow karo"
             artist.text = "Yahan tap karo"
             setOnClickListener {
@@ -191,9 +191,7 @@ class MusicWidgetView @JvmOverloads constructor(
     /** Settings se wapas aane par (access allow karne ke baad) dobara jodo. */
     override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
         super.onWindowFocusChanged(hasWindowFocus)
-        // Sirf tab dobara jodo jab access nahi tha (settings se allow karke wapas aaye ho);
-        // warna har focus change pe session listener dobara register karna bekaar hai.
-        if (hasWindowFocus && isAttachedToWindow && accessDenied) {
+        if (hasWindowFocus && isAttachedToWindow) {
             disconnect()
             connect()
         }

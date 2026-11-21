@@ -68,7 +68,7 @@ class StorageWidgetView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        ringBg.color = trackColor
+        ringBg.color = if (lightStyle) Color.parseColor("#26000000") else Color.parseColor("#33FFFFFF")
         ringFg.color = accent
         percentPaint.color = primaryColor
         subPaint.color = secondaryColor

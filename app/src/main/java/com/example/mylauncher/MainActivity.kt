@@ -2,11 +2,11 @@ package com.example.mylauncher
 
 import android.animation.ValueAnimator
 import android.app.ActivityManager
+import android.app.KeyguardManager
 import android.app.WallpaperManager
-import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
-import android.content.ComponentCallbacks2
 import android.content.IntentFilter
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -14,6 +14,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.RenderEffect
 import android.graphics.Shader
@@ -34,9 +35,13 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.view.animation.PathInterpolator
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import android.view.ViewGroup
+import android.appwidget.AppWidgetProviderInfo
+import androidx.appcompat.app.AlertDialog
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -57,9 +62,11 @@ import androidx.palette.graphics.Palette
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
+import java.util.concurrent.Executors
 import java.util.function.Consumer
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
 /**
  * ColorOS-style launcher:
@@ -70,11 +77,11 @@ import kotlin.math.max
 class MainActivity : AppCompatActivity() {
 
     // ---- Views ----
-    private lateinit var rootLayout: FrameLayout
+    internal lateinit var rootLayout: FrameLayout
     private lateinit var homeContainer: View
-    private lateinit var homePager: ViewPager2
+    internal lateinit var homePager: ViewPager2
     private lateinit var pageIndicator: LinearLayout
-    private lateinit var dockContainer: LinearLayout
+    internal lateinit var dockContainer: LinearLayout
     private lateinit var drawerContainer: View
     private lateinit var drawerRecycler: RecyclerView
     private lateinit var searchBar: EditText
@@ -86,50 +93,70 @@ class MainActivity : AppCompatActivity() {
     private lateinit var alphabetIndex: AlphabetIndexView
     private lateinit var editOverlay: View
     private lateinit var folderOverlay: View
-    private lateinit var folderPanel: View
-    private lateinit var folderTitle: TextView
-    private lateinit var folderRecycler: RecyclerView
+    internal lateinit var folderPanel: View
+    internal lateinit var folderTitle: TextView
+    internal lateinit var folderRecycler: RecyclerView
 
     // ---- Helpers ----
     private lateinit var paletteEngine: PaletteEngine
-    private lateinit var prefs: Prefs
-    private lateinit var iconStyle: IconStyle
-    private lateinit var stats: LaunchStats
+    internal lateinit var prefs: Prefs
+    internal lateinit var iconStyle: IconStyle
+    internal lateinit var stats: LaunchStats
 
     // ---- State ----
     private enum class DrawerTab { ALL, CATEGORIES }
 
-    private var allAppsFull: List<AppInfo> = emptyList() // saare apps (hidden bhi), icons bitmap + theme laga hua
-    private var allApps: List<AppInfo> = emptyList()     // jo dikhte hain (hidden hata ke)
-    private var dockPackages: List<String> = emptyList()
-    private var appsLoaded = false
-    private var appsDirty = false        // package add / remove hua, reload baaki hai
-    private var loadGeneration = 0       // purani (stale) loading ka nateeja ignore karne ke liye
-    private var loadedDarkIcons = false
-    private var cachedAllItems: List<DrawerItem>? = null
-    private var cachedCategoryItems: List<DrawerItem>? = null
-    // Pages + folder popup ke item views ek jagah recycle hote hain (default pool sirf 5 rakhta hai, ek page mein ~20 hote hain)
-    private val homeItemPool = RecyclerView.RecycledViewPool().apply {
-        setMaxRecycledViews(HomeGridAdapter.TYPE_APP, 48)
-        setMaxRecycledViews(HomeGridAdapter.TYPE_FOLDER, 12)
-        setMaxRecycledViews(HomeGridAdapter.TYPE_SEARCH, 2)
-    }
-    private var lastWallpaperOffset = -1f
-    private val lowRam by lazy { getSystemService(ActivityManager::class.java).isLowRamDevice }
-    private var pagerAdapter: HomePagerAdapter? = null
+    internal var allApps: List<AppInfo> = emptyList()
+    internal var pagerAdapter: HomePagerAdapter? = null
     private var wallpaperTheme: ThemeColors? = null
-    private var nameTint: Int = Color.WHITE
-    private var accentColor: Int = Color.parseColor("#FF3B30")
+    internal var nameTint: Int = Color.WHITE
+    internal var accentColor: Int = Color.parseColor("#FF3B30")
     private var wallpaperLight = false
     private var drawerTab = DrawerTab.ALL
-    private var drawerOpen = false
-    private var editMode = false
-    private var folderOpen = false
+    internal var drawerOpen = false
+    internal var editMode = false
+    internal var folderOpen = false
     private var pagerHooksAttached = false
     private var lastBuiltHeight = 0
-    private var lastPrefsSignature = ""
-    private var homeItemsGlobal: MutableList<HomeItem> = ArrayList()
-    private var pageSizes: List<Int> = emptyList()
+    internal var lastPrefsSignature = ""
+    private var installedCount = 0
+
+    // ---- Home layout (cells): state persist hota hai, ops usse badalta hai ----
+    internal lateinit var state: HomeState
+    internal lateinit var ops: HomeOps
+    internal lateinit var grid: GridSpec
+    internal lateinit var homeStore: HomeStore
+    internal lateinit var widgetHost: WidgetHostManager
+    internal lateinit var viewFactory: HomeViewFactory
+    internal lateinit var drag: DragController
+    internal lateinit var dragLayer: FrameLayout
+    // ---- 3D depth wallpaper + unlock animation ----
+    internal lateinit var depthLayer: DepthLayerView
+    internal var depthActive = false
+    private var depthAssetKey = ""
+    private var depthLoadToken = 0
+    private var lastUnlockAnimAt = 0L
+    private var userPresentAt = 0L
+    private var lockedAtPause = false
+    private val unlockViews = ArrayList<View>()
+    private val unlockReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_USER_PRESENT) {
+                userPresentAt = SystemClock.elapsedRealtime()
+                if (resumed) playUnlockAnimation()
+            }
+        }
+    }
+    internal var rowPxFirst = 0
+    internal var rowPxOther = 0
+    internal var pageTopPad = 0
+    internal var appByPkg: Map<String, AppInfo> = emptyMap()
+    internal var sheet: View? = null
+    private var openFolderId: String? = null
+    private var selectedId: String? = null
+    private var lastRawX = 0f
+    private var lastRawY = 0f
+    private var dockHighlight: Drawable? = null
 
     // Blur (Android 12+)
     private var systemBlurOk = false
@@ -144,18 +171,8 @@ class MainActivity : AppCompatActivity() {
     private var pendingPage = -1 // saved state se restore hone wala page
     private var resumed = false
     private val iconColorCache = HashMap<String, Int>()
-    private val uiHandler = Handler(Looper.getMainLooper())
-    private val reloadRunnable = Runnable { reloadAppsAsync() }
-
-    // Naya app install / uninstall / update: ek hi receiver (pehle har onResume pe PackageManager se poochte the)
-    private val packageReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            appsDirty = true
-            uiHandler.removeCallbacks(reloadRunnable)
-            // Ek install pe kai broadcast aate hain (REMOVED + ADDED + REPLACED): thoda ruk ke ek hi baar reload
-            if (resumed) uiHandler.postDelayed(reloadRunnable, 400)
-        }
-    }
+    internal val uiHandler = Handler(Looper.getMainLooper())
+    internal val bgExecutor = Executors.newSingleThreadExecutor()
 
     // Safety net: agar app khula hi nahi (koi error nahi aaya, launcher bhi stop nahi hua) to launch state
     // wapas IDLE ho jaye, taaki launcher permanently lock na ho.
@@ -174,11 +191,11 @@ class MainActivity : AppCompatActivity() {
     private val wallpaperManager by lazy { WallpaperManager.getInstance(this) }
 
     // Home ke saare tap / long-press callbacks
-    private val homeActions by lazy {
+    internal val homeActions by lazy {
         HomeActions(
             onAppClick = { app, view -> launchApp(app, view) },
-            onAppLongClick = { app, view -> showAppMenu(app, view) },
-            onFolderClick = { folder, tile -> openFolder(folder, tile) },
+            onAppLongClick = { app, view -> if (folderOpen) startFolderDrag(app, view) else showAppMenu(app, view) },
+            onFolderClick = { _, _ -> },
             onSearchClick = { openDrawer(focusSearch = true) },
             onMicClick = { safeStart(Intent(RecognizerIntent.ACTION_WEB_SEARCH)) }
         )
@@ -195,6 +212,7 @@ class MainActivity : AppCompatActivity() {
         private const val HEADER_HEIGHT_DP = 150  // page_home.xml ka clock header
         private const val MAX_ROW_DP = 120        // rows is se zyada nahi failti
         private const val PAGE_TOP_PAD_DP = 28    // baaki pages pe upar ki jagah
+        private const val EDIT_SCALE = 0.78f      // edit mode mein pager itna chhota
         private const val DRAWER_BLUR_PX = 90
         private const val LAUNCH_BLUR_PX = 60
         private const val FOLDER_BLUR_PX = 20f
@@ -237,6 +255,18 @@ class MainActivity : AppCompatActivity() {
         folderTitle = findViewById(R.id.folderTitle)
         folderRecycler = findViewById(R.id.folderRecycler)
         launchOverlayView = findViewById(R.id.launchOverlay)
+        dragLayer = findViewById(R.id.dragLayer)
+        // Depth layers sabse neeche: wallpaper -> clock -> subject; launcher UI (pager, dock) inke upar
+        depthLayer = DepthLayerView(this)
+        depthLayer.visibility = View.GONE
+        rootLayout.addView(depthLayer, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // Unlock detect: ek hi dynamic receiver (onDestroy mein unregister)
+        ContextCompat.registerReceiver(this, unlockReceiver, IntentFilter(Intent.ACTION_USER_PRESENT), ContextCompat.RECEIVER_NOT_EXPORTED)
+        homeStore = HomeStore(this)
+        widgetHost = WidgetHostManager(this)
+        viewFactory = HomeViewFactory(this)
+        drag = DragController(this)
+        if (pendingPage < 0) pendingPage = homeStore.currentPage
 
         // System bars aur keyboard ki jagah chhodo
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { _, insets ->
@@ -248,6 +278,8 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
+        allApps = loadInstalledApps()
+
         setupBlurState()
         setupDrawer()
         setupFolderPopup()
@@ -256,24 +288,31 @@ class MainActivity : AppCompatActivity() {
         setupBackHandling()
         applyLookFromPrefs()
 
-        // Apps: pehle se cache mein hon (rotation / recreate) to wahi, nahi to background mein load.
-        // Main thread pe ab icons / labels load nahi hote.
-        registerPackageReceiver()
-        val cached = AppCache.get()
-        if (cached != null && cached.darkIcons == IconRenderer.darkIconsEnabled(this, prefs)) {
-            applyLoadedApps(cached)
-        } else {
-            reloadAppsAsync()
-        }
-
         // Wallpaper se colors nikalo; wallpaper badle to apne aap dobara apply hoga
         paletteEngine = PaletteEngine(this)
         paletteEngine.start { theme -> applyTheme(theme) }
     }
 
+    override fun onStart() {
+        super.onStart()
+        widgetHost.start() // widgets ke updates sirf tab jab launcher dikh raha ho
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // Background mein memory kam: depth bitmaps chhodo, wapas aane par dobara load honge
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND && depthActive && !resumed) {
+            depthLoadToken++
+            depthLayer.clear()
+            depthAssetKey = ""
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         resumed = true
+        applyDepth()
+        checkUnlockOnResume()
 
         // Settings se wapas aaye? To badli hui settings apply karo
         val signature = prefs.signature()
@@ -282,8 +321,8 @@ class MainActivity : AppCompatActivity() {
             refreshFromPrefs()
         }
 
-        // App list badli thi (jab launcher dikh nahi raha tha)? Ab reload karo
-        if (appsDirty && appsLoaded) reloadAppsAsync()
+        // Naya app install / uninstall hua? (background thread pe check, UI nahi rukta)
+        reloadAppsIfChanged()
 
         // Launcher pause hua par stop nahi (app khula hi nahi / translucent tha): bacha hua launch state saaf karo.
         // Normal case mein (app khula) ye onStop mein ho chuka hota hai. Koi return animation nahi.
@@ -304,6 +343,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        // Pause ke waqt keyguard state: unlock ke fallback detection ke liye
+        lockedAtPause = (getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true)
         super.onPause()
         resumed = false
     }
@@ -313,15 +354,11 @@ class MainActivity : AppCompatActivity() {
         // App ne screen le li, launcher ab dikh nahi raha: overlay / blur / khule panels turant hata do
         // (koi animation nahi). Wapas aate waqt Android ki apni transition chalegi.
         if (launchState != LaunchState.IDLE) cleanupLaunch()
-    }
-
-    override fun onTrimMemory(level: Int) {
-        super.onTrimMemory(level)
-        // Process ko system sabse pehle maarne wala ho tabhi cache chhodo (warna dobara load karna padta)
-        if (level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE) {
-            AppCache.clear()
-            iconColorCache.clear()
-        }
+        // Drag adhura ho to safe cancel; widget updates band; current page save
+        cancelUnlockAnimation()
+        drag.cancel()
+        widgetHost.stop()
+        if (::state.isInitialized && pagerAdapter != null) homeStore.currentPage = homePager.currentItem
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -345,17 +382,22 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            unregisterReceiver(unlockReceiver)
+        } catch (e: IllegalArgumentException) {
+            // register nahi hua tha
+        }
+        depthLoadToken++
+        depthLayer.clear()
+        drag.cancel()
+        dismissSheet(false)
+        viewFactory.clear()
+        widgetHost.clearViews()
         paletteEngine.stop()
         uiHandler.removeCallbacks(launchTimeout)
         launchOverlayView.reset()
         longPressHandler.removeCallbacks(longPressRunnable)
-        uiHandler.removeCallbacks(reloadRunnable)
-        loadGeneration++ // chal rahi loading ka nateeja ab ignore hoga
-        try {
-            unregisterReceiver(packageReceiver)
-        } catch (e: IllegalArgumentException) {
-            // registered nahi tha
-        }
+        bgExecutor.shutdown()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             windowManager.removeCrossWindowBlurEnabledListener(blurListener)
         }
@@ -367,17 +409,11 @@ class MainActivity : AppCompatActivity() {
 
     /** Settings badli: icon style, glass, transition aur home pages dobara. */
     private fun refreshFromPrefs() {
+        applyDepth()
         iconStyle = IconStyle(this, prefs)
+        viewFactory.invalidateStyle()
         applyLookFromPrefs()
-        if (appsLoaded) {
-            if (IconRenderer.darkIconsEnabled(this, prefs) != loadedDarkIcons) {
-                reloadAppsAsync() // icon theme badli: icons background mein dobara render honge
-            } else {
-                recomputeVisibleApps() // hidden apps badle ho sakte hain (PackageManager ko dobara nahi poochna)
-                refreshDrawerList()
-                if (lastBuiltHeight > 0) buildHome(lastBuiltHeight)
-            }
-        }
+        if (lastBuiltHeight > 0) buildHome(lastBuiltHeight)
         if (!prefs.parallax) {
             homePager.windowToken?.let { wallpaperManager.setWallpaperOffsets(it, 0.5f, 0.5f) }
         }
@@ -390,16 +426,16 @@ class MainActivity : AppCompatActivity() {
         updateDrawerBackground()
     }
 
-    private fun glassStrength(): Float = prefs.glassStrength / 100f
+    internal fun glassStrength(): Float = prefs.glassStrength / 100f
 
     /** Widgets halke (frosted white) glass mein ya gehre mein: settings ya wallpaper ke hisaab se. */
-    private fun useLightGlass(): Boolean = when (prefs.widgetGlass) {
+    internal fun useLightGlass(): Boolean = when (prefs.widgetGlass) {
         "light" -> true
         "dark" -> false
         else -> wallpaperLight
     }
 
-    private fun effectiveAccent(): Int =
+    internal fun effectiveAccent(): Int =
         if (prefs.colorfulClock) accentColor else Color.parseColor("#E8FFFFFF")
 
     // ---------------------------------------------------------------------------------------
@@ -411,71 +447,48 @@ class MainActivity : AppCompatActivity() {
             val h = bottom - top
             if (h > 0 && h != lastBuiltHeight) {
                 lastBuiltHeight = h
-                if (appsLoaded) homePager.post { buildHome(h) } // apps abhi load ho rahe hon to load hone pe banega
+                homePager.post { buildHome(h) }
             }
         }
     }
 
     private fun buildHome(pagerHeight: Int) {
-        val dock = resolveDockApps()
-        val dockPackages = dock.map { it.packageName }.toSet()
-        val homeApps = allApps.filter { it.packageName !in dockPackages }
-        val homeItems = buildHomeItems(homeApps)
+        val map = HashMap<String, AppInfo>()
+        for (app in allApps) if (!map.containsKey(app.packageName)) map[app.packageName] = app
+        appByPkg = map
 
-        // Kitni rows fit hongi: pehle page pe clock + widgets ki jagah kam.
-        // Rows ko page ki poori height mein barabar failate hain (ColorOS jaisa).
-        val widgetTypes = prefs.widgetTypes
-        val widgetRows = (widgetTypes.size + 1) / 2
-        val firstPageHeaderDp = HEADER_HEIGHT_DP + widgetRows * WIDGET_ROW_HEIGHT_DP
+        // Rows pehle jaise: pehle page pe clock header ki jagah kam, rows page ki height mein barabar (ColorOS jaisa).
         val minRow = dp(ROW_HEIGHT_DP)
         val maxRow = dp(MAX_ROW_DP)
-        val topPad = dp(PAGE_TOP_PAD_DP)
-        val firstAvail = (pagerHeight - dp(firstPageHeaderDp)).coerceAtLeast(minRow)
-        val otherAvail = (pagerHeight - topPad).coerceAtLeast(minRow)
+        pageTopPad = dp(PAGE_TOP_PAD_DP)
+        val firstAvail = (pagerHeight - dp(HEADER_HEIGHT_DP)).coerceAtLeast(minRow)
+        val otherAvail = (pagerHeight - pageTopPad).coerceAtLeast(minRow)
         val firstRows = (firstAvail / minRow).coerceAtLeast(1)
         val otherRows = (otherAvail / minRow).coerceAtLeast(1)
-        val firstRowPx = minOf(firstAvail / firstRows, maxRow)
-        val otherRowPx = minOf(otherAvail / otherRows, maxRow)
+        rowPxFirst = minOf(firstAvail / firstRows, maxRow)
+        rowPxOther = minOf(otherAvail / otherRows, maxRow)
+        grid = GridSpec(HOME_COLUMNS, firstRows, otherRows)
 
-        // Items ko pages mein baanto (search widget poori row leta hai)
-        homeItemsGlobal = ArrayList(homeItems)
-        val pages = ArrayList<MutableList<HomeItem>>()
-        var currentPage = ArrayList<HomeItem>()
-        var cells = 0
-        var capacity = firstRows * HOME_COLUMNS
-        for (item in homeItems) {
-            val isSearch = item is HomeItem.Search
-            var needed = if (isSearch) HOME_COLUMNS else 1
-            if (isSearch && cells % HOME_COLUMNS != 0) needed += HOME_COLUMNS - cells % HOME_COLUMNS
-            if (cells + needed > capacity && currentPage.isNotEmpty()) {
-                pages.add(currentPage)
-                currentPage = ArrayList()
-                cells = 0
-                capacity = otherRows * HOME_COLUMNS
-                needed = if (isSearch) HOME_COLUMNS else 1
-            }
-            currentPage.add(item)
-            cells += needed
+        loadOrCreateState()
+        ops = HomeOps(state, grid)
+        val installed = LinkedHashSet<String>()
+        for (app in allApps) installed.add(app.packageName)
+        ops.reconcile(installed, prefs.widgetTypes, prefs.searchWidget, HomeOps.MAX_DOCK)
+        persistHome()
+        viewFactory.retain(state.entries.map { it.id }.toSet())
+
+        val existing = pagerAdapter
+        if (existing == null) {
+            val adapter = HomePagerAdapter(this)
+            pagerAdapter = adapter
+            homePager.adapter = adapter
+        } else {
+            existing.notifyDataSetChanged()
         }
-        pages.add(currentPage)
-        pageSizes = pages.map { it.size }
-
-        val widgetConfig = WidgetConfig(
-            widgetTypes, glassStrength(),
-            useLightGlass(), prefs.touchGlow, prefs.clockStyle == "compact"
-        )
-        val suggested = stats.top(homeApps, 4)
-        val adapter = HomePagerAdapter(
-            pages, nameTint, effectiveAccent(), useLightGlass(), iconStyle, widgetConfig, suggested,
-            homeActions, firstRowPx, otherRowPx, topPad, homeItemPool,
-            { editMode },
-            { page, items -> onPageReordered(page, items) }
-        )
-        pagerAdapter = adapter
         val current = if (pendingPage >= 0) pendingPage else homePager.currentItem
         pendingPage = -1
-        homePager.adapter = adapter
-        homePager.setCurrentItem(current.coerceAtMost(pages.size - 1), false)
+        val target = current.coerceIn(0, state.pageCount - 1)
+        if (homePager.currentItem != target) homePager.setCurrentItem(target, false)
 
         if (!pagerHooksAttached) {
             pagerHooksAttached = true
@@ -483,31 +496,231 @@ class MainActivity : AppCompatActivity() {
             DepthCurveTransformer.requestHighRefreshRate(this)
             homePager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                 override fun onPageScrolled(position: Int, positionOffset: Float, positionOffsetPixels: Int) {
+                    if (depthActive) depthLayer.setClockProgress(if (position == 0) 1f - positionOffset else 0f)
                     // Wallpaper pages ke saath halka sa khisakta hai (parallax)
                     val count = pagerAdapter?.itemCount ?: 1
                     if (prefs.parallax && count > 1) {
                         val x = ((position + positionOffset) / (count - 1)).coerceIn(0f, 1f)
-                        // Har frame binder call nahi: sirf jab offset sach mein badla ho
-                        if (abs(x - lastWallpaperOffset) > 0.002f) {
-                            lastWallpaperOffset = x
-                            homePager.windowToken?.let { wallpaperManager.setWallpaperOffsets(it, x, 0.5f) }
-                        }
+                        homePager.windowToken?.let { wallpaperManager.setWallpaperOffsets(it, x, 0.5f) }
                     }
                 }
 
                 override fun onPageSelected(position: Int) {
                     updateIndicator(position)
-                    // Tick sirf user ke swipe pe (rebuild / programmatic jump pe nahi)
-                    if (homePager.scrollState != ViewPager2.SCROLL_STATE_IDLE) {
-                        homePager.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                    }
+                    homePager.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    homeStore.currentPage = position
+                    // Selected widget ka frame naye page pe (agar wahi page hai)
+                    selectedId?.let { selectEntry(it) }
                 }
             })
         }
         DepthCurveTransformer.setEnabled(homePager, prefs.transition3d)
 
-        buildIndicator(pages.size, homePager.currentItem)
-        buildDock(dock)
+        buildIndicator(state.pageCount, homePager.currentItem)
+        buildDock()
+    }
+
+    /** Saved layout lo; nahi hai (ya "Reset home layout" dabaya gaya) to purane flow jaisa default banao. */
+    private fun loadOrCreateState() {
+        val token = prefs.homeResetToken
+        if (::state.isInitialized && state.resetToken == token) return
+        if (!::state.isInitialized) {
+            val loaded = homeStore.load()
+            if (loaded != null && loaded.resetToken == token) {
+                state = loaded
+                return
+            }
+        }
+        if (::state.isInitialized) {
+            // Reset: purane system widgets ke host ids chhodo
+            for (e in state.entries) if (e.kind == EntryKind.WIDGET) widgetHost.deleteId(e.widgetId)
+            selectedId = null
+        }
+        state = createDefaultState()
+        state.resetToken = token
+    }
+
+    /** Pehli baar (ya reset ke baad): wahi order jo pehle automatic tha, ab cells mein: widgets, search, folders, apps. */
+    private fun createDefaultState(): HomeState {
+        val st = HomeState()
+        val o = HomeOps(st, grid)
+        for (app in resolveDockApps()) st.dock.add(app.packageName)
+        for (t in prefs.widgetTypes) o.placeFlow(o.builtin(t))
+        val dockSet = st.dock.toSet()
+        val homeApps = allApps.filter { it.packageName !in dockSet }
+        for (item in buildHomeItems(homeApps)) {
+            when (item) {
+                is HomeItem.Search -> o.placeFlow(HomeEntry("search", EntryKind.SEARCH, 0, 0, 0, grid.cols, 1))
+                is HomeItem.Folder -> {
+                    val f = HomeEntry.newFolder(item.name, 0, 0, 0)
+                    f.packages.addAll(item.apps.map { it.packageName })
+                    o.placeFlow(f)
+                }
+                is HomeItem.App -> o.placeFlow(HomeEntry.app(item.app.packageName))
+            }
+        }
+        return st
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // 3D depth wallpaper
+    // ---------------------------------------------------------------------------------------
+    /**
+     * Depth wallpaper prefs ke hisaab se on / off / reload. Bitmaps background thread pe HARDWARE config mein load hote hain
+     * (GPU memory, Java heap nahi); assets nahi badle (same version) to dobara load nahi hota. Fail ho to normal wallpaper.
+     */
+    private fun applyDepth() {
+        val want = prefs.depthEnabled && DepthStore.hasBg(this)
+        if (!want) {
+            if (depthActive || depthAssetKey.isNotEmpty()) {
+                depthActive = false
+                depthAssetKey = ""
+                depthLoadToken++
+                depthLayer.clear()
+                depthLayer.visibility = View.GONE
+                paletteEngine.setSourceFile(null)
+                pagerAdapter?.refreshAll() // page-0 ka normal clock wapas
+            }
+            return
+        }
+        depthLayer.applyConfig(DepthConfig.from(prefs))
+        depthLayer.setAccent(effectiveAccent())
+        val key = prefs.depthAssetVersion.toString()
+        if (depthActive && key == depthAssetKey) return
+        val firstActivation = !depthActive
+        depthActive = true
+        depthAssetKey = key
+        depthLayer.visibility = View.VISIBLE
+        if (firstActivation) pagerAdapter?.refreshAll() // page-0 ka normal clock chhup jata hai (jagah bachi rehti hai)
+        paletteEngine.setSourceFile(DepthStore.bgFile(this)) // colors depth background se
+        val token = ++depthLoadToken
+        val lowRam = getSystemService(ActivityManager::class.java)?.isLowRamDevice == true
+        val maxDim = if (lowRam) 1600 else DepthStore.MAX_DIM
+        val bgFile = DepthStore.bgFile(this)
+        val fgFile = DepthStore.fgFile(this)
+        val hasFg = DepthStore.hasFg(this)
+        try {
+            bgExecutor.execute {
+                val bg = DepthStore.loadForDisplay(bgFile, maxDim)
+                val fg = if (hasFg) DepthStore.loadForDisplay(fgFile, maxDim) else null
+                uiHandler.post {
+                    if (token != depthLoadToken || isDestroyed) {
+                        bg?.recycle()
+                        fg?.recycle()
+                    } else if (bg == null) {
+                        // File kharab / missing: normal wallpaper pe wapas, koi crash nahi
+                        fg?.recycle()
+                        depthActive = false
+                        depthAssetKey = ""
+                        depthLayer.visibility = View.GONE
+                        paletteEngine.setSourceFile(null)
+                        pagerAdapter?.refreshAll()
+                    } else {
+                        depthLayer.setBitmaps(bg, fg)
+                    }
+                }
+            }
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            depthAssetKey = ""
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Unlock transition
+    // ---------------------------------------------------------------------------------------
+    /**
+     * onResume har baar unlock nahi hota (app se wapas aana bhi onResume hai). Isliye unlock tab maana jata hai jab:
+     *  - ACTION_USER_PRESENT aaya (launcher dikh raha ho to turant, nahi to 2.5 s ke andar onResume pe), ya
+     *  - fallback: pause ke waqt keyguard locked tha aur ab nahi (kuch phones pe broadcast nahi aata).
+     */
+    private fun checkUnlockOnResume() {
+        val now = SystemClock.elapsedRealtime()
+        val viaBroadcast = userPresentAt != 0L && now - userPresentAt < 2500
+        val keyguardNow = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+        val viaKeyguard = lockedAtPause && !keyguardNow
+        lockedAtPause = false
+        if (viaBroadcast || viaKeyguard) playUnlockAnimation()
+    }
+
+    /** Wallpaper zoom-out (+ blur-to-clear, depth wallpaper pe), clock spring-jaisa scale-in, icons ki halki staggered entrance. */
+    private fun playUnlockAnimation() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastUnlockAnimAt < 2000) return // duplicate events se overlap nahi
+        if (!resumed || editMode || drawerOpen || folderOpen || launchState != LaunchState.IDLE || drag.active) return
+        lastUnlockAnimAt = now
+        userPresentAt = 0L
+        cancelUnlockAnimation()
+
+        val lowRam = getSystemService(ActivityManager::class.java)?.isLowRamDevice == true
+        if (depthActive) depthLayer.playUnlock(!lowRam)
+
+        // Clock
+        val page0 = pagerAdapter?.holderFor(0)
+        val clockView: View? = if (depthActive) {
+            depthLayer.clock
+        } else if (page0 != null) {
+            if (page0.clockCompact.visibility == View.VISIBLE) page0.clockCompactView else page0.clock
+        } else {
+            null
+        }
+        if (clockView != null && homePager.currentItem == 0) {
+            clockView.alpha = 0f
+            clockView.scaleX = 0.9f
+            clockView.scaleY = 0.9f
+            clockView.animate().alpha(1f).scaleX(1f).scaleY(1f)
+                .setDuration(560)
+                .setInterpolator(OvershootInterpolator(0.9f))
+                .start()
+            unlockViews.add(clockView)
+        }
+
+        // Icons (current page + dock): halka scale + fade, chhota stagger
+        var index = 0
+        val cells = pagerAdapter?.cellsFor(homePager.currentItem)
+        if (cells != null) {
+            for (k in 0 until cells.childCount) {
+                val v = cells.getChildAt(k)
+                val tag = v.tag as? String ?: continue
+                if (tag.startsWith("app:") || tag.startsWith("folder:")) animateIn(v, index++)
+            }
+        }
+        for (k in 0 until dockContainer.childCount) animateIn(dockContainer.getChildAt(k), index++)
+    }
+
+    private fun animateIn(v: View, index: Int) {
+        v.alpha = 0f
+        v.scaleX = 0.86f
+        v.scaleY = 0.86f
+        v.animate().alpha(1f).scaleX(1f).scaleY(1f)
+            .setStartDelay(min(index * 14L, 240L))
+            .setDuration(260)
+            .setInterpolator(DecelerateInterpolator(1.4f))
+            .withEndAction { v.animate().setStartDelay(0) } // delay baad ki animations (press effect) pe na rahe
+            .start()
+        unlockViews.add(v)
+    }
+
+    /** Chal rahi unlock animation rok kar sab views normal state mein (alpha / scale 1, depth zoom / blur 0). */
+    private fun cancelUnlockAnimation() {
+        for (v in unlockViews) {
+            v.animate().cancel()
+            v.animate().setStartDelay(0)
+            v.alpha = 1f
+            v.scaleX = 1f
+            v.scaleY = 1f
+        }
+        unlockViews.clear()
+        if (::depthLayer.isInitialized) depthLayer.cancelAnimations()
+    }
+
+    internal fun persistHome() {
+        if (::state.isInitialized) homeStore.save(state)
+    }
+
+    /** "Suggested apps" widget ke liye: dock ke bahar ke sabse zyada khole gaye apps. */
+    internal fun suggestedApps(): List<AppInfo> {
+        val dockSet = state.dock.toSet()
+        return stats.top(allApps.filter { it.packageName !in dockSet }, 4)
     }
 
     /** Home ke items: search widget, (auto) folders, apps. Phir user ka saved order lagta hai. */
@@ -554,41 +767,85 @@ class MainActivity : AppCompatActivity() {
         return known + unknown
     }
 
-    /** Ek page ke andar drag-drop khatam hua: global order update karke save karo. */
-    private fun onPageReordered(page: Int, items: List<HomeItem>) {
-        if (page < 0 || page >= pageSizes.size) return
-        var start = 0
-        for (i in 0 until page) start += pageSizes[i]
-        if (start + items.size > homeItemsGlobal.size) return
-        for (i in items.indices) homeItemsGlobal[start + i] = items[i]
-        prefs.homeOrder = homeItemsGlobal.map { it.key }
-        lastPrefsSignature = prefs.signature() // rebuild na ho
-    }
-
-    /** Phone, Messages, Browser, Camera: package names load ke saath pehle se nikle hote hain. */
+    /** Phone, Messages, Browser, Camera ke default apps dhundta hai. */
     private fun resolveDockApps(): List<AppInfo> {
-        val result = ArrayList<AppInfo>(4)
-        for (pkg in dockPackages) {
+        val probes = listOf(
+            Intent(Intent.ACTION_DIAL),
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_MESSAGING),
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER),
+            Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+        )
+        val result = ArrayList<AppInfo>()
+        for (probe in probes) {
+            val pkg = packageManager
+                .resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)
+                ?.activityInfo?.packageName
+            if (pkg == null || pkg == "android") continue
             val app = allApps.firstOrNull { it.packageName == pkg }
-            if (app != null) result.add(app)
+            if (app != null && result.none { it.packageName == pkg }) result.add(app)
         }
         return result
     }
 
-    private fun buildDock(dock: List<AppInfo>) {
+    /** Dock ab saved layout (state.dock) se banta hai: apps dock mein aa / ja sakte hain, order badal sakta hai. */
+    internal fun buildDock() {
         dockContainer.removeAllViews()
-        for (app in dock) {
+        for (pkg in state.dock) {
+            val app = appByPkg[pkg] ?: continue
             val item = layoutInflater.inflate(R.layout.item_dock, dockContainer, false)
             val icon = item.findViewById<ImageView>(R.id.dockIcon)
             icon.setImageDrawable(iconStyle.drawableFor(app))
             iconStyle.styleIcon(icon)
+            item.tag = pkg
             item.setOnClickListener { launchApp(app, icon) }
-            item.setOnLongClickListener {
-                showAppMenu(app, icon)
-                true
-            }
             item.applyPressEffect()
             dockContainer.addView(item)
+        }
+    }
+
+    // ---- Dock drag-drop ke helpers (DragController use karta hai) ----
+    internal fun dockRect(): Rect {
+        val loc = IntArray(2)
+        dockContainer.getLocationOnScreen(loc)
+        return Rect(0, loc[1] - dp(12), resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+    }
+
+    /** Dock mein kis position pe insert hoga (dragged app ko ginti se bahar rakhkar). */
+    internal fun dockIndexAt(rawX: Float, excludePkg: String?): Int {
+        var idx = 0
+        val loc = IntArray(2)
+        for (i in 0 until dockContainer.childCount) {
+            val c = dockContainer.getChildAt(i)
+            if (excludePkg != null && c.tag == excludePkg) continue
+            c.getLocationOnScreen(loc)
+            if (rawX > loc[0] + c.width / 2f) idx++
+        }
+        return idx
+    }
+
+    internal fun dockSlotRect(index: Int, count: Int): RectF {
+        val loc = IntArray(2)
+        dockContainer.getLocationOnScreen(loc)
+        val slotW = dockContainer.width / max(count, 1).toFloat()
+        val cx = loc[0] + (index + 0.5f) * slotW
+        val cy = loc[1] + dockContainer.height / 2f
+        val half = iconStyle.sizePx / 2f
+        return RectF(cx - half, cy - half, cx + half, cy + half)
+    }
+
+    internal fun dockChildAt(index: Int): View? = dockContainer.getChildAt(index)
+
+    internal fun setDockHighlight(on: Boolean) {
+        if (on) {
+            if (dockHighlight == null) {
+                dockHighlight = GradientDrawable().apply {
+                    setColor(Color.argb(46, 255, 255, 255))
+                    cornerRadius = dp(24).toFloat()
+                }
+            }
+            dockContainer.foreground = dockHighlight
+        } else if (dockContainer.foreground != null) {
+            dockContainer.foreground = null
         }
     }
 
@@ -623,20 +880,106 @@ class MainActivity : AppCompatActivity() {
     // ---------------------------------------------------------------------------------------
     private fun setupFolderPopup() {
         folderRecycler.layoutManager = GridLayoutManager(this, HOME_COLUMNS)
-        folderRecycler.setRecycledViewPool(homeItemPool)
         folderOverlay.setOnClickListener { closeFolder() }
+        folderTitle.setOnClickListener { renameOpenFolder() } // naam pe tap = rename
     }
 
-    private fun openFolder(folder: HomeItem.Folder, tile: View) {
-        if (folderOpen || drawerOpen || editMode || launchState != LaunchState.IDLE) return
-        folderOpen = true
+    /** Folder ka naam badlo (home pe folder ke neeche ka label bhi). */
+    private fun renameOpenFolder() {
+        val entry = openFolderId?.let { state.find(it) } ?: return
+        val input = EditText(this)
+        input.setText(entry.name)
+        input.setSelection(input.text.length)
+        input.setSingleLine()
+        AlertDialog.Builder(this)
+            .setTitle("Folder ka naam")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val name = input.text.toString().trim().ifEmpty { "Folder" }.take(24)
+                entry.name = name
+                folderTitle.text = name
+                persistHome()
+                pagerAdapter?.syncAll(false)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
 
-        folderTitle.text = folder.name
+    /** Folder popup khula ho to uska screen rect (drag ke liye). */
+    internal fun folderPanelRect(): Rect? {
+        if (!folderOpen) return null
+        val loc = IntArray(2)
+        folderPanel.getLocationOnScreen(loc)
+        return Rect(loc[0], loc[1], loc[0] + folderPanel.width, loc[1] + folderPanel.height)
+    }
+
+    /** Folder ke andar pointer kaun si position pe hai. */
+    internal fun folderIndexAt(rawX: Float, rawY: Float): Int {
+        val entry = openFolderId?.let { state.find(it) } ?: return 0
+        val loc = IntArray(2)
+        folderRecycler.getLocationOnScreen(loc)
+        val cellW = (folderRecycler.width / HOME_COLUMNS).coerceAtLeast(1)
+        val cellH = dp(ROW_HEIGHT_DP)
+        val col = ((rawX - loc[0]) / cellW).toInt().coerceIn(0, HOME_COLUMNS - 1)
+        val row = ((rawY - loc[1]) / cellH).toInt().coerceAtLeast(0)
+        return (row * HOME_COLUMNS + col).coerceIn(0, (entry.packages.size - 1).coerceAtLeast(0))
+    }
+
+    /** Folder ka content badla (reorder / hatana): popup ki grid dobara. */
+    internal fun refreshOpenFolder() {
+        if (!folderOpen) return
+        val entry = openFolderId?.let { state.find(it) }
+        if (entry == null) {
+            closeFolder()
+            return
+        }
+        folderTitle.text = entry.name
+        val apps = entry.packages.mapNotNull { appByPkg[it] }
         folderRecycler.adapter = HomeGridAdapter(
-            ArrayList<HomeItem>(folder.apps.map { HomeItem.App(it) }),
+            ArrayList<HomeItem>(apps.map { HomeItem.App(it) }),
             nameTint, false, iconStyle, 0, homeActions
         )
-        val rows = ((folder.apps.size + HOME_COLUMNS - 1) / HOME_COLUMNS).coerceIn(1, 4)
+    }
+
+    /** Folder ke andar app ko long-press: drag shuru (folder ke andar reorder ya bahar nikalna / doosre folder mein). */
+    private fun startFolderDrag(app: AppInfo, view: View) {
+        val folderId = openFolderId ?: return
+        val origin = (view.parent as? View) ?: view
+        val now = SystemClock.uptimeMillis()
+        val cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, downX, downY, 0)
+        window.superDispatchTouchEvent(cancel)
+        cancel.recycle()
+        ignoreTouches = true
+        drag.start(HomeEntry.app(app.packageName), DragController.Src.FOLDER, origin, lastRawX, lastRawY, folderId)
+    }
+
+    /** App ko folder se hatao: wo folder ki jagah (ya paas ki khaali jagah) pe home pe aa jata hai. */
+    private fun removeFromFolder(folderId: String, pkg: String) {
+        val f = state.find(folderId) ?: return
+        val page = f.page
+        val x = f.cx
+        val y = f.cy
+        f.packages.remove(pkg)
+        ops.cleanFolders()
+        val e = HomeEntry.app(pkg)
+        if (!ops.placeNearest(e, page, x, y)) ops.placeFlow(e, page)
+        closeFolder(false)
+        afterModelChange(true)
+    }
+
+    internal fun openFolderEntry(id: String, tile: View) {
+        if (folderOpen || drawerOpen || launchState != LaunchState.IDLE) return
+        val entry = state.find(id) ?: return
+        openFolderId = id
+        folderOpen = true
+
+        val apps = entry.packages.mapNotNull { appByPkg[it] }
+        folderTitle.text = entry.name
+        folderRecycler.adapter = HomeGridAdapter(
+            ArrayList<HomeItem>(apps.map { HomeItem.App(it) }),
+            nameTint, false, iconStyle, 0, homeActions
+        )
+        val rows = ((apps.size + HOME_COLUMNS - 1) / HOME_COLUMNS).coerceIn(1, 4)
         val lp = folderRecycler.layoutParams
         lp.height = rows * dp(ROW_HEIGHT_DP)
         folderRecycler.layoutParams = lp
@@ -675,7 +1018,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun closeFolder(animated: Boolean = true) {
+    internal fun closeFolder(animated: Boolean = true) {
         if (!folderOpen) return
         folderOpen = false
         setHomeBlur(false)
@@ -705,7 +1048,7 @@ class MainActivity : AppCompatActivity() {
     private fun setHomeBlur(on: Boolean) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             homeContainer.setRenderEffect(
-                if (on && prefs.blurEnabled && !lowRam) {
+                if (on && prefs.blurEnabled) {
                     RenderEffect.createBlurEffect(FOLDER_BLUR_PX, FOLDER_BLUR_PX, Shader.TileMode.CLAMP)
                 } else {
                     null
@@ -731,9 +1074,6 @@ class MainActivity : AppCompatActivity() {
             { app, iconView -> showAppMenu(app, iconView) }
         ) { app, iconView -> launchApp(app, iconView) }
         drawerRecycler.adapter = drawerAdapter
-        drawerRecycler.setHasFixedSize(true)
-        drawerRecycler.itemAnimator = null // search / tab badalte waqt change-animation ki zaroorat nahi
-        drawerRecycler.setItemViewCacheSize(10)
 
         // Right edge A-Z index: letter pe jao
         alphabetIndex.onLetterSelected = { letter ->
@@ -766,26 +1106,24 @@ class MainActivity : AppCompatActivity() {
         view.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
     }
 
-    /**
-     * Search text + selected tab ke hisaab se drawer ki list. "All" aur "Categories" ki lists ek baar banti hain
-     * (apps badle tabhi dobara); search ke liye pehle se bana lowercase naam use hota hai. List ka diff
-     * DrawerAdapter background thread pe nikalta hai.
-     */
+    /** Search text + selected tab ke hisaab se drawer ki list banata hai. */
     private fun refreshDrawerList() {
         val query = searchBar.text.toString().trim()
         val items: List<DrawerItem>
         if (query.isNotEmpty()) {
-            val q = query.lowercase()
-            items = allApps.filter { it.labelLower.contains(q) }.map { DrawerItem.App(it) }
+            items = allApps
+                .filter { it.label.contains(query, ignoreCase = true) }
+                .map { DrawerItem.App(it) }
             alphabetIndex.visibility = View.GONE
         } else if (drawerTab == DrawerTab.ALL) {
-            items = cachedAllItems ?: allApps.map { DrawerItem.App(it) }.also { cachedAllItems = it }
+            items = allApps.map { DrawerItem.App(it) }
             alphabetIndex.visibility = View.VISIBLE
         } else {
-            items = cachedCategoryItems ?: buildCategoryItems().also { cachedCategoryItems = it }
+            items = buildCategoryItems()
             alphabetIndex.visibility = View.GONE
         }
-        drawerAdapter.submit(items) { drawerRecycler.scrollToPosition(0) }
+        drawerAdapter.submit(items)
+        drawerRecycler.scrollToPosition(0)
     }
 
     /** Apps ko category ke hisaab se sections mein baanto. */
@@ -817,7 +1155,7 @@ class MainActivity : AppCompatActivity() {
         popup.show()
     }
 
-    private fun openDrawer(focusSearch: Boolean = false) {
+    internal fun openDrawer(focusSearch: Boolean = false) {
         if (drawerOpen || editMode || folderOpen || launchState != LaunchState.IDLE) return
         drawerOpen = true
 
@@ -899,7 +1237,7 @@ class MainActivity : AppCompatActivity() {
         }
         val bg = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors)
         // Blur chal raha ho to halka tint (glass strength se), warna gehra taaki icons padhe ja sakein
-        val blurActive = systemBlurOk && prefs.blurEnabled && !lowRam
+        val blurActive = systemBlurOk && prefs.blurEnabled
         bg.alpha = if (blurActive) 80 + (prefs.glassStrength * 0.9f).toInt() else 215
         drawerContainer.background = bg
     }
@@ -908,12 +1246,14 @@ class MainActivity : AppCompatActivity() {
     // Wallpaper theme sync
     // ---------------------------------------------------------------------------------------
     private fun applyTheme(t: ThemeColors) {
-        if (t == wallpaperTheme) return // wahi colors: kuch update karne ki zaroorat nahi
+        GlassTheme.tint = t.glassTint // glass surfaces ka wallpaper-based tint
         wallpaperTheme = t
         nameTint = t.appNameTint
         accentColor = t.accent
         wallpaperLight = t.isLight
-        pagerAdapter?.setColors(t.appNameTint, effectiveAccent(), useLightGlass())
+        viewFactory.invalidateStyle()
+        pagerAdapter?.refreshAll()
+        if (depthActive) depthLayer.setAccent(effectiveAccent())
         drawerAdapter.setNameTint(t.appNameTint)
         alphabetIndex.tint = t.appNameTint
 
@@ -941,11 +1281,12 @@ class MainActivity : AppCompatActivity() {
      * animation = true: "Animation blur" toggle se control hota hai, nahi to "Visual blur" se.
      */
     private fun setWindowBlur(radius: Int, animation: Boolean = false) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !systemBlurOk || lowRam) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !systemBlurOk) return
         val allowed = if (animation) prefs.animationBlur else prefs.blurEnabled
         val target = if (allowed) radius else 0
         if (target == blurRadius) return
         blurRadius = target
+        if (depthActive) depthLayer.setBlur(target * 0.4f) // drawer: depth wallpaper bhi halka blur
         window.setBackgroundBlurRadius(target)
     }
 
@@ -953,6 +1294,13 @@ class MainActivity : AppCompatActivity() {
     // Touch: long-press (edit mode), swipe-up / swipe-down (drawer)
     // ---------------------------------------------------------------------------------------
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        lastRawX = ev.rawX
+        lastRawY = ev.rawY
+        // Drag chal raha ho to saare touches drag controller ke (pager / icons ko kuch nahi milta)
+        if (drag.active) {
+            drag.onTouch(ev)
+            return true
+        }
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
             ignoreTouches = false
             downX = ev.x
@@ -961,13 +1309,9 @@ class MainActivity : AppCompatActivity() {
                 ev.x < rootLayout.width - dp(40)
 
             longPressHandler.removeCallbacks(longPressRunnable)
-            // Sirf home pager ke upar (dock/search ke upar nahi) long-press ginenge
-            if (!drawerOpen && !editMode && !folderOpen && launchState == LaunchState.IDLE && ev.y <= homePager.bottom) {
-                // App icon ka apna long-press (menu) pehle chale, khaali jagah pe edit mode baad mein
-                longPressHandler.postDelayed(
-                    longPressRunnable,
-                    (ViewConfiguration.getLongPressTimeout() + 150).toLong()
-                )
+            // Home / dock ke upar long-press: item uthao ya (khaali jagah pe) edit mode
+            if (!drawerOpen && !folderOpen && launchState == LaunchState.IDLE && sheet == null) {
+                longPressHandler.postDelayed(longPressRunnable, ViewConfiguration.getLongPressTimeout().toLong())
             }
         }
 
@@ -989,7 +1333,7 @@ class MainActivity : AppCompatActivity() {
                 val dy = ev.y - downY
                 val mostlyVertical = abs(dy) > abs(dx) * 1.5f
                 if (mostlyVertical) {
-                    if (!drawerOpen && !editMode && !folderOpen && dy < -dp(140)) {
+                    if (!drawerOpen && !editMode && !folderOpen && sheet == null && dy < -dp(140)) {
                         openDrawer()
                     } else if (drawerOpen && dy > dp(140) && drawerStartedAtTop) {
                         closeDrawer()
@@ -1001,42 +1345,84 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Edit mode (ColorOS jaisa: pages chhote, neeche 4 buttons, upar Done)
+    // Edit mode: pages chhote, upar toolbar (Widgets / Pages / Wallpaper / Layout / Settings / Done),
+    // dock neeche dikhta rehta hai. Items long-press karke drag hote hain.
     // ---------------------------------------------------------------------------------------
+    private class Hit(val entry: HomeEntry, val src: DragController.Src, val view: View?)
+
     private fun onHomeLongPress() {
-        if (drawerOpen || editMode || folderOpen) return
+        if (drawerOpen || folderOpen || launchState != LaunchState.IDLE || sheet != null) return
+        val hit = hitTestEntry(lastRawX, lastRawY)
         // Neeche ke views ko CANCEL bhejo taaki pressed state / click na bane
         val now = SystemClock.uptimeMillis()
         val cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, downX, downY, 0)
         window.superDispatchTouchEvent(cancel)
         cancel.recycle()
         ignoreTouches = true
-        enterEditMode()
+        if (hit == null) {
+            if (!editMode) enterEditMode()
+            return
+        }
+        drag.start(hit.entry, hit.src, hit.view, lastRawX, lastRawY)
     }
 
-    private fun enterEditMode() {
+    /** Screen point pe kaun sa item hai (dock ya current home page). */
+    private fun hitTestEntry(rawX: Float, rawY: Float): Hit? {
+        if (editMode) {
+            val tb = findViewById<View>(R.id.editToolbar)
+            val l = IntArray(2)
+            tb.getLocationOnScreen(l)
+            if (rawY < l[1] + tb.height) return null // toolbar ke upar long-press = item nahi
+        }
+        if (dockRect().contains(rawX.toInt(), rawY.toInt())) {
+            val loc = IntArray(2)
+            for (i in 0 until dockContainer.childCount) {
+                val c = dockContainer.getChildAt(i)
+                c.getLocationOnScreen(loc)
+                if (rawX >= loc[0] && rawX <= loc[0] + c.width) {
+                    val pkg = c.tag as? String ?: return null
+                    return Hit(HomeEntry.app(pkg), DragController.Src.DOCK, c)
+                }
+            }
+            return null
+        }
+        if (homePager.scrollState != ViewPager2.SCROLL_STATE_IDLE) return null
+        val page = homePager.currentItem
+        val cells = pagerAdapter?.cellsFor(page) ?: return null
+        val local = cells.toLocal(rawX, rawY, homePager.scaleX)
+        if (local[0] < 0f || local[1] < 0f || local[0] > cells.width ||
+            local[1] > cells.paddingTop + cells.rows * cells.cellH
+        ) return null
+        val cell = cells.cellAt(local[0], local[1])
+        val e = ops.occupantAt(page, cell[0], cell[1]) ?: return null
+        return Hit(e, DragController.Src.HOME, cells.childForId(e.id))
+    }
+
+    /** Drag shuru hone se pehle: edit mode on, selection hatao. */
+    internal fun prepareForDrag() {
+        selectEntry(null)
+        if (!editMode && !folderOpen) enterEditMode()
+    }
+
+    internal fun enterEditMode() {
         if (editMode || drawerOpen || folderOpen) return
         editMode = true
         homePager.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        pagerAdapter?.setEditing(true)
 
         homePager.animate().cancel()
         homePager.animate()
-            .scaleX(0.84f)
-            .scaleY(0.84f)
-            .translationY(-dp(24).toFloat())
+            .scaleX(EDIT_SCALE)
+            .scaleY(EDIT_SCALE)
+            .translationY(0f)
             .setDuration(260)
             .setInterpolator(DecelerateInterpolator(1.6f))
-            .start()
-
-        dockContainer.animate().cancel()
-        dockContainer.animate().alpha(0f).setDuration(200)
-            .withEndAction { if (editMode) dockContainer.visibility = View.INVISIBLE }
             .start()
 
         Toast.makeText(this, "Item ko dabake rakho aur drag karke hilao", Toast.LENGTH_SHORT).show()
         pageIndicator.background = LiquidGlassDrawable(dp(10).toFloat(), 0.5f)
         pageIndicator.setPadding(dp(10), 0, dp(10), 0)
-        pageIndicator.animate().translationY(-dp(84).toFloat()).setDuration(260).start()
+        pageIndicator.animate().translationY(-(homePager.height * (1f - EDIT_SCALE) / 2f)).setDuration(260).start()
 
         editOverlay.animate().cancel()
         editOverlay.alpha = 0f
@@ -1044,9 +1430,14 @@ class MainActivity : AppCompatActivity() {
         editOverlay.animate().alpha(1f).setDuration(260).start()
     }
 
-    private fun exitEditMode() {
+    internal fun exitEditMode() {
         if (!editMode) return
+        drag.cancel()
+        dismissSheet(false)
+        selectEntry(null)
         editMode = false
+        pagerAdapter?.setEditing(false)
+        persistHome()
 
         homePager.animate().cancel()
         homePager.animate()
@@ -1056,10 +1447,6 @@ class MainActivity : AppCompatActivity() {
             .setDuration(260)
             .setInterpolator(DecelerateInterpolator(1.6f))
             .start()
-
-        dockContainer.visibility = View.VISIBLE
-        dockContainer.animate().cancel()
-        dockContainer.animate().alpha(1f).setDuration(220).start()
 
         pageIndicator.background = null
         pageIndicator.setPadding(0, 0, 0, 0)
@@ -1071,12 +1458,132 @@ class MainActivity : AppCompatActivity() {
             .start()
     }
 
+    // ---- Selection (widget resize) ----
+    /** Edit mode mein page pe tap: widget pe = select (resize handles), baaki jagah = deselect, folder = khulta hai. */
+    internal fun onEditTap(page: Int, x: Float, y: Float) {
+        val cells = pagerAdapter?.cellsFor(page) ?: return
+        val c = cells.cellAt(x, y)
+        val e = ops.occupantAt(page, c[0], c[1])
+        when {
+            e != null && (e.kind == EntryKind.WIDGET || e.kind == EntryKind.BUILTIN) -> selectEntry(e.id)
+            e != null && e.kind == EntryKind.FOLDER -> {
+                selectEntry(null)
+                cells.childForId(e.id)?.let { v -> openFolderEntry(e.id, v.findViewById<View>(R.id.folderTile) ?: v) }
+            }
+            else -> selectEntry(null)
+        }
+    }
+
+    internal fun selectEntry(id: String?) {
+        val adapter = pagerAdapter ?: return
+        for (page in 0 until state.pageCount) {
+            val cells = adapter.cellsFor(page) ?: continue
+            cells.resizeFrame?.let {
+                (it.parent as? ViewGroup)?.removeView(it)
+                cells.resizeFrame = null
+            }
+        }
+        selectedId = null
+        if (id == null) return
+        val e = state.find(id) ?: return
+        val cells = adapter.cellsFor(e.page) ?: run {
+            selectedId = id // page abhi bound nahi: page aate hi frame lagega
+            return
+        }
+        val rows = grid.rows(e.page)
+        var minSx = 1
+        var minSy = 1
+        var maxSx = grid.cols
+        var maxSy = rows
+        var canH = true
+        var canV = true
+        when (e.kind) {
+            EntryKind.WIDGET -> {
+                val info = widgetHost.infoFor(e.widgetId)
+                if (info != null) {
+                    val sp = widgetHost.spansFor(info, cells.cellW, cells.cellH, grid.cols, rows)
+                    minSx = sp.minSx
+                    minSy = sp.minSy
+                    maxSx = sp.maxSx
+                    maxSy = sp.maxSy
+                    canH = sp.maxSx > sp.minSx
+                    canV = sp.maxSy > sp.minSy
+                } else {
+                    canH = false
+                    canV = false
+                }
+            }
+            EntryKind.BUILTIN -> {
+                minSx = 2
+                minSy = 1
+                maxSy = minOf(4, rows)
+            }
+            else -> return
+        }
+        val frame = ResizeFrame(this, e, minSx, minSy, maxSx, maxSy, canH, canV)
+        frame.alpha = 0f
+        cells.addView(frame, CellLayout.LP(e.cx, e.cy, e.sx, e.sy))
+        cells.resizeFrame = frame
+        frame.animate().alpha(1f).setDuration(160).start()
+        selectedId = id
+    }
+
+    /** Widget / built-in widget hatao (app uninstall nahi hota). */
+    internal fun removeEntry(e: HomeEntry) {
+        if (e.kind == EntryKind.WIDGET) widgetHost.deleteId(e.widgetId)
+        if (e.kind == EntryKind.BUILTIN) {
+            prefs.widgetTypes = prefs.widgetTypes - e.type
+            lastPrefsSignature = prefs.signature()
+        }
+        state.entries.remove(e)
+        selectedId = null
+        afterModelChange(true)
+    }
+
+    /** Model badla: save, views milao (position badalne ka animation), dock + selection dobara. */
+    internal fun afterModelChange(animate: Boolean) {
+        persistHome()
+        viewFactory.retain(state.entries.map { it.id }.toSet())
+        pagerAdapter?.syncAll(animate)
+        buildDock()
+        val sid = selectedId
+        if (sid != null) selectEntry(sid)
+    }
+
+    /** Pages ki ginti / order badla. */
+    internal fun onPagesChanged() {
+        pagerAdapter?.notifyDataSetChanged()
+        if (homePager.currentItem >= state.pageCount) homePager.setCurrentItem(state.pageCount - 1, false)
+        buildIndicator(state.pageCount, homePager.currentItem)
+        persistHome()
+    }
+
+    internal fun dismissSheet(animated: Boolean = true) {
+        val sh = sheet ?: return
+        sheet = null
+        val panel = (sh as? ViewGroup)?.getChildAt(0)
+        if (animated && panel != null) {
+            panel.animate().translationY(panel.height.toFloat()).setDuration(200)
+                .withEndAction { (sh.parent as? ViewGroup)?.removeView(sh) }.start()
+            sh.animate().alpha(0f).setDuration(200).start()
+        } else {
+            (sh.parent as? ViewGroup)?.removeView(sh)
+        }
+    }
+
+    @Deprecated("Widget bind / configure results")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (!handleWidgetResult(requestCode, resultCode)) {
+            @Suppress("DEPRECATION")
+            super.onActivityResult(requestCode, resultCode, data)
+        }
+    }
+
     /** Edit mode ke buttons + search pill ka mic. */
     private fun setupExtras() {
         findViewById<View>(R.id.editDone).setOnClickListener { exitEditMode() }
-        findViewById<View>(R.id.editWidgets).setOnClickListener {
-            startActivity(SettingsActivity.pageIntent(this, SettingsActivity.PAGE_WIDGETS))
-        }
+        findViewById<View>(R.id.editWidgets).setOnClickListener { showWidgetPicker() }
+        findViewById<View>(R.id.editPages).setOnClickListener { showPageManager() }
         findViewById<View>(R.id.editWallpaper).setOnClickListener {
             startActivity(SettingsActivity.pageIntent(this, SettingsActivity.PAGE_WALLPAPER))
         }
@@ -1088,7 +1595,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun safeStart(intent: Intent) {
+    internal fun safeStart(intent: Intent) {
         try {
             startActivity(intent)
         } catch (e: ActivityNotFoundException) {
@@ -1101,6 +1608,8 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
+                    sheet != null -> dismissSheet()
+                    drag.active -> drag.cancel()
                     folderOpen -> closeFolder()
                     editMode -> exitEditMode()
                     drawerOpen -> closeDrawer()
@@ -1113,61 +1622,57 @@ class MainActivity : AppCompatActivity() {
     // ---------------------------------------------------------------------------------------
     // Apps
     // ---------------------------------------------------------------------------------------
-    /**
-     * Saare apps background thread pe load hote hain (labels + icons bitmap mein). Main thread sirf nateeja lagata hai.
-     * Purani (stale) loading ka nateeja generation check se ignore hota hai.
-     */
-    private fun reloadAppsAsync() {
-        val generation = ++loadGeneration
-        uiHandler.removeCallbacks(reloadRunnable)
-        val appContext = applicationContext
-        Background.io.execute {
-            val result = try {
-                AppLoader.load(appContext, prefs)
-            } catch (e: Exception) {
-                null
+    private fun loadInstalledApps(): List<AppInfo> {
+        val intent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        val resolveInfos = packageManager.queryIntentActivities(intent, 0)
+        installedCount = resolveInfos.size
+        val hidden = prefs.hiddenApps
+
+        return resolveInfos
+            .map { info ->
+                AppInfo(
+                    label = info.loadLabel(packageManager).toString(),
+                    packageName = info.activityInfo.packageName,
+                    icon = info.loadIcon(packageManager),
+                    category = info.activityInfo.applicationInfo.category
+                )
             }
-            uiHandler.post {
-                if (isDestroyed || generation != loadGeneration || result == null) return@post
-                AppCache.set(result)
-                applyLoadedApps(result)
+            .filter { it.packageName != packageName && it.packageName !in hidden } // khud ko aur hide kiye apps ko hatao
+            .sortedBy { it.label.lowercase() }
+    }
+
+    /** Naya app install / purana uninstall hua ho to app list dobara banao (background mein check). */
+    private fun reloadAppsIfChanged() {
+        bgExecutor.execute {
+            val intent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+            val count = packageManager.queryIntentActivities(intent, 0).size
+            if (count != installedCount) {
+                val apps = loadInstalledApps()
+                uiHandler.post {
+                    allApps = apps
+                    refreshDrawerList()
+                    if (lastBuiltHeight > 0) buildHome(lastBuiltHeight)
+                }
             }
         }
     }
 
-    private fun applyLoadedApps(loaded: LoadedApps) {
-        allAppsFull = loaded.apps
-        dockPackages = loaded.dockPackages
-        loadedDarkIcons = loaded.darkIcons
-        appsLoaded = true
-        appsDirty = false
-        recomputeVisibleApps()
+    private fun reloadApps() {
+        allApps = loadInstalledApps()
         refreshDrawerList()
         if (lastBuiltHeight > 0) buildHome(lastBuiltHeight)
     }
 
-    /** Hidden apps hata ke dikhne wali list. PackageManager ko dobara nahi poochna padta. */
-    private fun recomputeVisibleApps() {
-        val hidden = prefs.hiddenApps
-        allApps = if (hidden.isEmpty()) allAppsFull else allAppsFull.filter { it.packageName !in hidden }
-        cachedAllItems = null
-        cachedCategoryItems = null
-    }
-
-    private fun registerPackageReceiver() {
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_PACKAGE_ADDED)
-            addAction(Intent.ACTION_PACKAGE_REMOVED)
-            addAction(Intent.ACTION_PACKAGE_REPLACED)
-            addAction(Intent.ACTION_PACKAGE_CHANGED)
-            addDataScheme("package")
-        }
-        ContextCompat.registerReceiver(this, packageReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
-    }
-
     /** App icon pe long-press: App info / Uninstall / Hide (ColorOS jaisa menu). */
-    private fun showAppMenu(app: AppInfo, anchor: View) {
-        if (editMode) return
+    /** Drag bina hile chhoda (ya folder se): app ka menu. */
+    internal fun showAppMenuFor(pkg: String, anchor: View?, folderId: String?) {
+        val app = appByPkg[pkg] ?: return
+        showAppMenu(app, anchor ?: dockContainer, folderId)
+    }
+
+    internal fun showAppMenu(app: AppInfo, anchor: View, folderId: String? = null) {
         longPressHandler.removeCallbacks(longPressRunnable)
         anchor.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
 
@@ -1181,6 +1686,7 @@ class MainActivity : AppCompatActivity() {
         popup.menu.add(0, 1, 0, "App info")
         if (!isSystem) popup.menu.add(0, 2, 1, "Uninstall")
         popup.menu.add(0, 3, 2, "Hide app")
+        if (folderId != null) popup.menu.add(0, 4, 3, "Folder se hatao")
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 1 -> safeStart(
@@ -1188,19 +1694,18 @@ class MainActivity : AppCompatActivity() {
                 )
                 2 -> safeStart(Intent(Intent.ACTION_DELETE, Uri.parse("package:${app.packageName}")))
                 3 -> hideApp(app)
+                4 -> folderId?.let { removeFromFolder(it, app.packageName) }
             }
             true
         }
         popup.show()
     }
 
-    private fun hideApp(app: AppInfo) {
+    internal fun hideApp(app: AppInfo) {
         prefs.hiddenApps = prefs.hiddenApps + app.packageName
         lastPrefsSignature = prefs.signature()
         Toast.makeText(this, "${app.label} hide ho gaya (Settings se wapas la sakte ho)", Toast.LENGTH_SHORT).show()
-        recomputeVisibleApps()
-        refreshDrawerList()
-        if (lastBuiltHeight > 0) buildHome(lastBuiltHeight)
+        reloadApps()
     }
 
     /**
@@ -1210,7 +1715,7 @@ class MainActivity : AppCompatActivity() {
      *  3. Usi waqt, bina kisi delay ke, startActivity() ek hi baar. App ke upar halka fade-in (ActivityOptions).
      * Wapas aane pe koi launcher animation nahi: Android ki default closing / return transition chalti hai.
      */
-    private fun launchApp(app: AppInfo, iconView: View) {
+    internal fun launchApp(app: AppInfo, iconView: View) {
         if (launchState != LaunchState.IDLE || editMode) return
         val launchIntent = packageManager.getLaunchIntentForPackage(app.packageName)
         if (launchIntent == null) {
@@ -1324,7 +1829,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------------------------------------------------------------------------------------
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    internal fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun screenHeight(): Float = resources.displayMetrics.heightPixels.toFloat()
 }

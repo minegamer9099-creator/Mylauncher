@@ -10,6 +10,7 @@ import android.os.Looper
 import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.drawable.toBitmap
 import androidx.palette.graphics.Palette
+import java.util.concurrent.Executors
 
 /**
  * Wallpaper se nikle hue colors, aur unse bane UI colors.
@@ -23,7 +24,8 @@ data class ThemeColors(
     val drawerTop: Int,     // drawer background gradient (upar)
     val drawerBottom: Int,  // drawer background gradient (neeche)
     val accent: Int,        // clock ke pehle digit ka strong accent color
-    val isLight: Boolean    // wallpaper halka (light) hai ya gehra
+    val isLight: Boolean,   // wallpaper halka (light) hai ya gehra
+    val glassTint: Int = Color.WHITE // glass surfaces ka halka tint (wallpaper ke dominant se)
 )
 
 /**
@@ -45,101 +47,83 @@ class PaletteEngine(context: Context) {
 
     private val appContext = context.applicationContext
     private val wallpaperManager = WallpaperManager.getInstance(appContext)
+    private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
-
-    // Pichla nikala hua theme + us wallpaper ki id (alag file, taaki launcher ki settings pe asar na pade)
-    private val store = appContext.getSharedPreferences("launcher_theme", Context.MODE_PRIVATE)
-
-    @Volatile
-    private var stopped = false
 
     private var callback: ((ThemeColors) -> Unit)? = null
     private var colorsListener: WallpaperManager.OnColorsChangedListener? = null
 
     /** Colors nikalna shuru karo, aur wallpaper badalne pe auto-update. */
     fun start(onThemeReady: (ThemeColors) -> Unit) {
-        stopped = false
         callback = onThemeReady
-
-        // Pichli baar ka theme turant lagao (wallpaper decode ka intezaar nahi), phir dekho wallpaper badla ya nahi
-        val cached = loadCached()
-        if (cached != null) onThemeReady(cached.second)
-        refresh(force = false)
+        refresh()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            val listener = WallpaperManager.OnColorsChangedListener { _, _ -> refresh(force = true) }
+            val listener = WallpaperManager.OnColorsChangedListener { _, _ -> refresh() }
             colorsListener = listener
             wallpaperManager.addOnColorsChangedListener(listener, mainHandler)
         }
     }
 
     fun stop() {
-        stopped = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             colorsListener?.let { wallpaperManager.removeOnColorsChangedListener(it) }
         }
         colorsListener = null
         callback = null
+        executor.shutdown()
     }
 
-    /**
-     * Background thread pe colors nikalo, phir main thread pe callback do.
-     * force = false: wallpaper pichli baar jaisa hi hai to kuch nahi karna (poora wallpaper decode karna bachta hai).
-     */
-    fun refresh(force: Boolean = false) {
-        Background.io.execute {
-            if (stopped) return@execute
-            val id = currentWallpaperId()
-            if (!force && id != NO_ID) {
-                val cached = loadCached()
-                if (cached != null && cached.first == id) return@execute
-            }
-            val theme = fromBitmapPalette() ?: fromWallpaperColors() ?: buildTheme(
+    // 3D depth wallpaper ho to colors uski background image se (system wallpaper alag ho sakta hai)
+    @Volatile
+    private var sourceFile: java.io.File? = null
+    private var cacheKey: String? = null
+    private var cacheTheme: ThemeColors? = null
+
+    /** Depth wallpaper ki background file do (null = system wallpaper se). Colors dobara nikalte hain. */
+    fun setSourceFile(file: java.io.File?) {
+        sourceFile = file
+        refresh()
+    }
+
+    /** Background thread pe colors nikalo, phir main thread pe callback do. */
+    fun refresh() {
+        if (executor.isShutdown) return
+        executor.execute {
+            val theme = fromSourceFile() ?: fromBitmapPalette() ?: fromWallpaperColors() ?: buildTheme(
                 DEFAULT_DOMINANT, DEFAULT_VIBRANT, DEFAULT_MUTED
             )
-            saveCached(id, theme)
-            mainHandler.post {
-                if (!stopped) callback?.invoke(theme)
-            }
+            mainHandler.post { callback?.invoke(theme) }
         }
     }
 
-    private fun currentWallpaperId(): Int =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            wallpaperManager.getWallpaperId(WallpaperManager.FLAG_SYSTEM)
-        } else {
-            NO_ID
+    /** Depth wallpaper ki file se (96px sample) colors; same file + same modified time ho to cache se. */
+    private fun fromSourceFile(): ThemeColors? {
+        val f = sourceFile ?: return null
+        if (!f.exists()) return null
+        val key = f.absolutePath + ":" + f.lastModified()
+        if (key == cacheKey) return cacheTheme
+        return try {
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeFile(f.absolutePath, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            var sample = 1
+            while (bounds.outWidth / (sample * 2) >= 96 && bounds.outHeight / (sample * 2) >= 96) sample *= 2
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+            val bmp = android.graphics.BitmapFactory.decodeFile(f.absolutePath, opts) ?: return null
+            val palette = Palette.from(bmp).maximumColorCount(16).generate()
+            bmp.recycle()
+            val dominant = palette.getDominantColor(DEFAULT_DOMINANT)
+            val vibrant = palette.vibrantSwatch?.rgb ?: palette.lightVibrantSwatch?.rgb
+                ?: palette.mutedSwatch?.rgb ?: dominant
+            val muted = palette.getMutedColor(dominant)
+            val theme = buildTheme(dominant, vibrant, muted)
+            cacheKey = key
+            cacheTheme = theme
+            theme
+        } catch (e: Exception) {
+            null
         }
-
-    private fun saveCached(id: Int, t: ThemeColors) {
-        store.edit()
-            .putInt("id", id)
-            .putInt("dominant", t.dominant)
-            .putInt("vibrant", t.vibrant)
-            .putInt("muted", t.muted)
-            .putInt("tint", t.appNameTint)
-            .putInt("border", t.searchBorder)
-            .putInt("top", t.drawerTop)
-            .putInt("bottom", t.drawerBottom)
-            .putInt("accent", t.accent)
-            .putBoolean("light", t.isLight)
-            .apply()
-    }
-
-    private fun loadCached(): Pair<Int, ThemeColors>? {
-        if (!store.contains("id") || !store.contains("accent")) return null
-        val theme = ThemeColors(
-            dominant = store.getInt("dominant", DEFAULT_DOMINANT),
-            vibrant = store.getInt("vibrant", DEFAULT_VIBRANT),
-            muted = store.getInt("muted", DEFAULT_MUTED),
-            appNameTint = store.getInt("tint", Color.WHITE),
-            searchBorder = store.getInt("border", Color.WHITE),
-            drawerTop = store.getInt("top", DEFAULT_DOMINANT),
-            drawerBottom = store.getInt("bottom", DEFAULT_MUTED),
-            accent = store.getInt("accent", DEFAULT_VIBRANT),
-            isLight = store.getBoolean("light", false)
-        )
-        return Pair(store.getInt("id", NO_ID), theme)
     }
 
     // ---------------------------------------------------------------------------------------
@@ -151,7 +135,6 @@ class PaletteEngine(context: Context) {
             // Chhota bitmap kaafi hai, isse fast + kam memory
             val bitmap = drawable.toBitmap(96, 96, Bitmap.Config.ARGB_8888)
             val palette = Palette.from(bitmap).maximumColorCount(16).generate()
-            bitmap.recycle() // chhota bitmap hai, par turant chhod do
 
             val dominant = palette.getDominantColor(DEFAULT_DOMINANT)
             // Vibrant na mile to light vibrant, phir muted, phir dominant try karo
@@ -199,7 +182,9 @@ class PaletteEngine(context: Context) {
             drawerTop = ColorUtils.blendARGB(Color.BLACK, dominant, 0.35f),
             drawerBottom = ColorUtils.blendARGB(Color.BLACK, muted, 0.20f),
             accent = makeAccent(vibrant),
-            isLight = ColorUtils.calculateLuminance(dominant) > 0.55
+            isLight = ColorUtils.calculateLuminance(dominant) > 0.55,
+            // Safed glass mein dominant color ki halki jhalak (premium rehne ke liye sirf 20%)
+            glassTint = ColorUtils.blendARGB(Color.WHITE, dominant, 0.20f)
         )
     }
 
@@ -222,7 +207,6 @@ class PaletteEngine(context: Context) {
     }
 
     private companion object {
-        const val NO_ID = -1
         val DEFAULT_DOMINANT = Color.parseColor("#26324D")
         val DEFAULT_VIBRANT = Color.parseColor("#7C9CFF")
         val DEFAULT_MUTED = Color.parseColor("#3A4660")

@@ -1,15 +1,20 @@
 package com.example.mylauncher
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.drawable.AdaptiveIconDrawable
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
+import android.graphics.drawable.LayerDrawable
+import android.os.Build
 import android.widget.ImageView
 
 /**
  * Icons ka look (size, shape, rim glow, labels) settings se.
- * Har adapter icon bind karte waqt styleIcon() call karta hai (ek view pe ek hi baar lagta hai).
- * Icon ka theme (dark / original) ab load ke waqt IconRenderer laga deta hai, yahan sirf frame / size.
+ * Har adapter icon bind karte waqt styleIcon() call karta hai.
  */
 class IconStyle(context: Context, prefs: Prefs) {
 
@@ -21,8 +26,44 @@ class IconStyle(context: Context, prefs: Prefs) {
     private val rim: Boolean = prefs.iconRim
     private val radiusPx: Float = sizePx * 0.28f
 
-    /** App ka icon (theme load ke waqt hi lag chuka hai). */
-    fun drawableFor(app: AppInfo): Drawable = app.icon
+    /** Dark icon theme: "dark", ya "auto" aur system dark mode on. */
+    private val darkIcons: Boolean = when (prefs.iconTheme) {
+        "dark" -> true
+        "auto" -> (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        else -> false
+    }
+    private val darkTile = Color.parseColor("#1F1F24")
+    private val iconCache = HashMap<String, Drawable>()
+
+    /**
+     * App ka icon, theme ke hisaab se. Dark theme mein: adaptive icon ka background gehra karke
+     * (Android 13+ pe monochrome layer safed karke) ColorOS ke "dark icons" jaisa look.
+     */
+    fun drawableFor(app: AppInfo): Drawable {
+        if (!darkIcons) return app.icon
+        return iconCache.getOrPut(app.packageName) { makeDark(app.icon) }
+    }
+
+    private fun makeDark(icon: Drawable): Drawable {
+        if (icon is AdaptiveIconDrawable) {
+            var foreground: Drawable? = icon.foreground
+            if (Build.VERSION.SDK_INT >= 33) {
+                val mono = icon.monochrome
+                if (mono != null) {
+                    val copy = mono.constantState?.newDrawable()?.mutate() ?: mono.mutate()
+                    copy.setTint(Color.WHITE)
+                    foreground = copy
+                }
+            }
+            if (foreground != null) {
+                return AdaptiveIconDrawable(ColorDrawable(darkTile), foreground)
+            }
+        }
+        // Purana (non-adaptive) icon: gehre tile ke andar thoda chhota karke
+        val inner = icon.constantState?.newDrawable()?.mutate() ?: icon
+        return LayerDrawable(arrayOf(ColorDrawable(darkTile), InsetDrawable(inner, 0.14f)))
+    }
 
     /** Icon ke background / rim ka corner radius (launch animation isse match karti hai). */
     val cornerRadiusPx: Float

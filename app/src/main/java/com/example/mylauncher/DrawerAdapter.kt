@@ -4,14 +4,10 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
-import androidx.recyclerview.widget.AsyncListDiffer
-import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 
 /**
  * App drawer ka adapter: apps + (Categories tab mein) section headers.
- * List badalne pe (search likhna, tab badalna) diff background thread pe nikalta hai aur sirf badle hue
- * items update hote hain (pehle har baar notifyDataSetChanged se saare visible items rebind hote the).
  */
 class DrawerAdapter(
     private var nameTint: Int,
@@ -20,28 +16,15 @@ class DrawerAdapter(
     private val onAppClick: (AppInfo, View) -> Unit
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
-    private val differ = AsyncListDiffer(this, object : DiffUtil.ItemCallback<DrawerItem>() {
-        override fun areItemsTheSame(oldItem: DrawerItem, newItem: DrawerItem): Boolean = when {
-            oldItem is DrawerItem.Header && newItem is DrawerItem.Header -> oldItem.title == newItem.title
-            oldItem is DrawerItem.App && newItem is DrawerItem.App ->
-                oldItem.app.packageName == newItem.app.packageName
-            else -> false
-        }
-
-        override fun areContentsTheSame(oldItem: DrawerItem, newItem: DrawerItem): Boolean =
-            oldItem == newItem
-    })
-
-    private val items: List<DrawerItem>
-        get() = differ.currentList
+    private var items: List<DrawerItem> = emptyList()
 
     class HeaderViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val title: TextView = view.findViewById(R.id.headerTitle)
     }
 
-    /** onCommitted: diff lag jaane ke baad (jaise list ko upar scroll karne ke liye). */
-    fun submit(newItems: List<DrawerItem>, onCommitted: (() -> Unit)? = null) {
-        differ.submitList(newItems, if (onCommitted != null) Runnable { onCommitted() } else null)
+    fun submit(newItems: List<DrawerItem>) {
+        items = newItems
+        notifyDataSetChanged()
     }
 
     fun setNameTint(color: Int) {
@@ -61,9 +44,8 @@ class DrawerAdapter(
 
     /** A-Z index ke liye: is letter se shuru hone wala pehla app kis position pe hai (-1 = nahi mila). */
     fun positionOfLetter(letter: Char): Int {
-        val list = items
-        for (i in list.indices) {
-            val item = list[i]
+        for (i in items.indices) {
+            val item = items[i]
             if (item is DrawerItem.App && letterOf(item.app.label) == letter) return i
         }
         return -1

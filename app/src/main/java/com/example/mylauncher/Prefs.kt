@@ -103,6 +103,51 @@ class Prefs(context: Context) {
         get() = (sp.getString("home_order", "") ?: "").split("\n").filter { it.isNotEmpty() }
         set(value) { sp.edit().putString("home_order", value.joinToString("\n")).apply() }
 
+    // ---- 3D depth wallpaper (bg -> clock -> foreground) ----
+    var depthEnabled: Boolean
+        get() = sp.getBoolean("depth_enabled", false)
+        set(value) { sp.edit().putBoolean("depth_enabled", value).apply() }
+
+    /** Clock ka horizontal offset (screen width ka fraction, -0.5..0.5). */
+    var depthClockX: Float
+        get() = sp.getFloat("depth_clock_x", 0f)
+        set(value) { sp.edit().putFloat("depth_clock_x", value).apply() }
+
+    /** Clock ki upar se position (screen height ka fraction, 0..0.8). */
+    var depthClockY: Float
+        get() = sp.getFloat("depth_clock_y", 0.14f)
+        set(value) { sp.edit().putFloat("depth_clock_y", value).apply() }
+
+    var depthClockScale: Float
+        get() = sp.getFloat("depth_clock_scale", 1f)
+        set(value) { sp.edit().putFloat("depth_clock_scale", value).apply() }
+
+    var depthFgX: Float
+        get() = sp.getFloat("depth_fg_x", 0f)
+        set(value) { sp.edit().putFloat("depth_fg_x", value).apply() }
+
+    var depthFgY: Float
+        get() = sp.getFloat("depth_fg_y", 0f)
+        set(value) { sp.edit().putFloat("depth_fg_y", value).apply() }
+
+    var depthFgScale: Float
+        get() = sp.getFloat("depth_fg_scale", 1f)
+        set(value) { sp.edit().putFloat("depth_fg_scale", value).apply() }
+
+    var depthShowDate: Boolean
+        get() = sp.getBoolean("depth_show_date", true)
+        set(value) { sp.edit().putBoolean("depth_show_date", value).apply() }
+
+    /** Depth assets (bg / fg) badalne par badhta hai: MainActivity ko dobara load karne ka signal. */
+    var depthAssetVersion: Long
+        get() = sp.getLong("depth_asset_version", 0L)
+        set(value) { sp.edit().putLong("depth_asset_version", value).apply() }
+
+    /** "Home layout reset" dabane par badalta hai: MainActivity isse dekhkar layout dobara default banata hai. */
+    var homeResetToken: Long
+        get() = sp.getLong("home_reset_token", 0L)
+        set(value) { sp.edit().putLong("home_reset_token", value).apply() }
+
     /** Settings badli ya nahi, ye pata karne ke liye. */
     fun signature(): String =
         sp.all.entries.sortedBy { it.key }.joinToString("|") { entry ->

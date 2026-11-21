@@ -1,19 +1,20 @@
 package com.example.mylauncher
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.util.AttributeSet
 import android.util.TypedValue
+import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/**
- * Glass card ke andar bada date number + din + mahina.
- * Teeno strings ek baar (tick pe) nikalte hain; onDraw mein SimpleDateFormat nahi banta.
- */
+/** Glass card ke andar bada date number + din + mahina. */
 class DateWidgetView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
@@ -36,37 +37,26 @@ class DateWidgetView @JvmOverloads constructor(
         textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12f, resources.displayMetrics)
     }
 
-    private val locale = Locale.getDefault()
-    private val dayFormat = SimpleDateFormat("d", locale)
-    private val weekdayFormat = SimpleDateFormat("EEEE", locale)
-    private val monthFormat = SimpleDateFormat("MMMM", locale)
-    private var day = ""
-    private var weekday = ""
-    private var month = ""
-    private val tickListener = Runnable {
-        updateDate()
-        invalidate()
-    }
-
-    init {
-        updateDate()
-    }
-
-    private fun updateDate() {
-        val now = Date()
-        day = dayFormat.format(now)
-        weekday = weekdayFormat.format(now)
-        month = monthFormat.format(now)
+    private val tickReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            invalidate()
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         weekdayPaint.color = primaryColor
         monthPaint.color = secondaryColor
-        dayPaint.color = accent
+        val now = Date()
+        val locale = Locale.getDefault()
+        val day = SimpleDateFormat("d", locale).format(now)
+        val weekday = SimpleDateFormat("EEEE", locale).format(now)
+        val month = SimpleDateFormat("MMMM", locale).format(now)
 
         val cx = width / 2f
         val cy = height / 2f
+
+        dayPaint.color = accent
         val dayBaseline = cy - (dayPaint.ascent() + dayPaint.descent()) / 2f - 10f * density
         canvas.drawText(day, cx, dayBaseline, dayPaint)
         canvas.drawText(weekday, cx, dayBaseline + 28f * density, weekdayPaint)
@@ -75,13 +65,21 @@ class DateWidgetView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        TimeTicker.register(context, tickListener)
-        updateDate()
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_TIME_TICK)
+            addAction(Intent.ACTION_DATE_CHANGED)
+            addAction(Intent.ACTION_TIMEZONE_CHANGED)
+        }
+        ContextCompat.registerReceiver(context, tickReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         invalidate()
     }
 
     override fun onDetachedFromWindow() {
-        TimeTicker.unregister(tickListener)
         super.onDetachedFromWindow()
+        try {
+            context.unregisterReceiver(tickReceiver)
+        } catch (e: IllegalArgumentException) {
+            // pehle se registered nahi tha
+        }
     }
 }

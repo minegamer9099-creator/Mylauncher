@@ -41,41 +41,17 @@ class HomeActions(
 /**
  * Home page / folder popup ka grid adapter: apps, folders aur search widget dikhata hai.
  * rowHeightPx > 0 ho to har row us height ki hoti hai (rows page mein barabar failti hain).
- *
- * Ek page ka adapter dobara-dobara naya nahi banta: update() se wahi adapter naye data ke saath chalta hai,
- * aur kuch badla na ho to kuch nahi hota (item views recycle pool mein rehte hain, dobara inflate nahi hote).
  */
 class HomeGridAdapter(
-    private var items: MutableList<HomeItem>,
-    private var nameTint: Int,
-    private var lightGlass: Boolean,
-    private var style: IconStyle,
-    private var rowHeightPx: Int,
+    private val items: MutableList<HomeItem>,
+    private val nameTint: Int,
+    private val lightGlass: Boolean,
+    private val style: IconStyle,
+    private val rowHeightPx: Int,
     private val actions: HomeActions
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     fun currentItems(): List<HomeItem> = items
-
-    /** Naya data / colors. Sab kuch same ho to turant return (koi rebind nahi). */
-    fun update(
-        newItems: MutableList<HomeItem>,
-        tint: Int,
-        light: Boolean,
-        newStyle: IconStyle,
-        rowHeight: Int
-    ) {
-        if (items === newItems && nameTint == tint && lightGlass == light &&
-            style === newStyle && rowHeightPx == rowHeight
-        ) {
-            return
-        }
-        items = newItems
-        nameTint = tint
-        lightGlass = light
-        style = newStyle
-        rowHeightPx = rowHeight
-        notifyDataSetChanged()
-    }
 
     /** Drag-drop: item ko ek jagah se doosri jagah le jao. */
     fun moveItem(from: Int, to: Int) {
@@ -147,11 +123,7 @@ class HomeGridAdapter(
             val density = holder.itemView.resources.displayMetrics.density
             val primary = if (lightGlass) Color.parseColor("#1F2328") else Color.WHITE
             val secondary = if (lightGlass) Color.parseColor("#8A1F2328") else Color.parseColor("#CCFFFFFF")
-            // Glass background sirf tab naya banta hai jab light/dark badla ho (shader allocation bachti hai)
-            if (holder.pill.tag != lightGlass) {
-                holder.pill.background = LiquidGlassDrawable(26f * density, if (lightGlass) 0.6f else 0.5f)
-                holder.pill.tag = lightGlass
-            }
+            holder.pill.background = LiquidGlassDrawable(26f * density, if (lightGlass) 0.6f else 0.5f)
             holder.label.setTextColor(secondary)
             val tint = ColorStateList.valueOf(primary)
             holder.searchIcon.imageTintList = tint
@@ -163,7 +135,7 @@ class HomeGridAdapter(
 
     override fun getItemCount(): Int = items.size
 
-    companion object {
+    private companion object {
         const val TYPE_APP = 0
         const val TYPE_FOLDER = 1
         const val TYPE_SEARCH = 2

@@ -84,7 +84,8 @@ class QuickActionsWidgetView @JvmOverloads constructor(
             val active = i == 0 && torchOn
             chipPaint.color = when {
                 active -> accent
-                else -> chipFill
+                lightStyle -> Color.parseColor("#1A000000")
+                else -> Color.parseColor("#26FFFFFF")
             }
             val radius = chip.height() * 0.35f
             canvas.drawRoundRect(chip, radius, radius, chipPaint)

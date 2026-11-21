@@ -20,7 +20,7 @@ import android.graphics.drawable.Drawable
 class LiquidGlassDrawable(
     private val radiusPx: Float,
     private val strength: Float = 0.5f,
-    private val tint: Int = Color.WHITE
+    private val tint: Int = GlassTheme.tint
 ) : Drawable() {
 
     private val rect = RectF()

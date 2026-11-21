@@ -34,6 +34,7 @@ import androidx.appcompat.widget.SwitchCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import java.util.concurrent.Executors
 import kotlin.math.max
 
 /**
@@ -49,6 +50,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private lateinit var prefs: Prefs
     private lateinit var content: LinearLayout
+    private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -100,6 +102,11 @@ class SettingsActivity : AppCompatActivity() {
             PAGE_GENERAL -> buildGeneralPage()
             else -> buildHubPage()
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        executor.shutdown()
     }
 
     private fun titleFor(page: String): String = when (page) {
@@ -168,6 +175,9 @@ class SettingsActivity : AppCompatActivity() {
         wallpaper.addView(label("Preset chuno ya gallery se apni photo lagao", 12f, DIM))
         buildWallpaperPicker(wallpaper)
         addButton(wallpaper, "Gallery se chuno") { pickImage.launch("image/*") }
+        addButton(wallpaper, "3D depth wallpaper (clock peeche, subject aage)...") {
+            startActivity(Intent(this, DepthEditorActivity::class.java))
+        }
 
         addSectionTitle("Wallpaper effects")
         val effects = addCard()
@@ -246,8 +256,9 @@ class SettingsActivity : AppCompatActivity() {
 
         addSectionTitle("Reset")
         val reset = addCard()
-        addButton(reset, "Home layout reset (icons ka order)") {
+        addButton(reset, "Home layout reset (icons, folders, widgets, pages ka arrangement)") {
             prefs.homeOrder = emptyList()
+            prefs.homeResetToken = System.currentTimeMillis() // MainActivity layout dobara default banayegi
             toast("Home layout default ho gaya")
         }
         addButton(reset, "Hide kiye hue apps wapas laao") {
@@ -293,13 +304,7 @@ class SettingsActivity : AppCompatActivity() {
         val h = dp(128)
         for (preset in WallpaperPresets.presets) {
             val thumb = ImageView(this)
-            // Thumbnail background thread pe banta hai (6 gradient bitmaps UI thread ko nahi rokte)
-            Background.io.execute {
-                val bmp = WallpaperPresets.render(preset, w, h)
-                mainHandler.post {
-                    if (!isDestroyed) thumb.setImageBitmap(bmp)
-                }
-            }
+            thumb.setImageBitmap(WallpaperPresets.render(preset, w, h))
             thumb.scaleType = ImageView.ScaleType.CENTER_CROP
             thumb.contentDescription = preset.name
             val shape = GradientDrawable()
@@ -318,7 +323,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun applyPreset(preset: WallpaperPresets.Preset) {
         toast("Wallpaper set ho raha hai...")
-        Background.io.execute {
+        executor.execute {
             try {
                 val dm = resources.displayMetrics
                 val bmp = WallpaperPresets.render(preset, dm.widthPixels, dm.heightPixels)
@@ -332,7 +337,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun setWallpaperFromUri(uri: Uri) {
         toast("Wallpaper set ho raha hai...")
-        Background.io.execute {
+        executor.execute {
             try {
                 val dm = resources.displayMetrics
                 val target = max(dm.widthPixels, dm.heightPixels)

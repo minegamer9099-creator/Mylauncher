@@ -19,7 +19,6 @@ class FolderTileView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     private var icons: List<Drawable> = emptyList()
-    private var shownApps: List<AppInfo> = emptyList()
     private val clipPath = Path()
     private val cellRect = RectF()
 
@@ -41,9 +40,6 @@ class FolderTileView @JvmOverloads constructor(
     }
 
     fun setApps(apps: List<AppInfo>, style: IconStyle) {
-        val shown = apps.take(9)
-        if (shown == shownApps && icons.size == shown.size) return // wahi apps: dobara copy mat banao
-        shownApps = shown
         // Drawable ki copy lo: warna chhote size ke bounds baaki jagah ke icons ko bigaad denge
         icons = apps.take(9).map { app ->
             val d = style.drawableFor(app)

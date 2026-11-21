@@ -1,20 +1,22 @@
 package com.example.mylauncher
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.text.format.DateFormat
 import android.util.AttributeSet
 import android.util.TypedValue
+import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import kotlin.math.min
 
-/**
- * Glass card ke andar analog clock: ticks, date aur hands.
- * Time / date ek baar (har minute) nikalke yaad rakhte hain; onDraw mein koi allocation nahi.
- */
+/** Glass card ke andar analog clock: ticks, date, digital time aur hands. */
 class AnalogClockWidgetView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
@@ -36,32 +38,22 @@ class AnalogClockWidgetView @JvmOverloads constructor(
         strokeWidth = 2.5f * density
     }
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val timePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textAlign = Paint.Align.CENTER
+        isFakeBoldText = true
+        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 22f, resources.displayMetrics)
+    }
     private val datePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#CCFFFFFF")
         textAlign = Paint.Align.CENTER
         textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 10f, resources.displayMetrics)
     }
 
-    private val dateFormat = SimpleDateFormat("EEE, d MMM", Locale.getDefault())
-    private var dateText = ""
-    private var hourAngle = 0f
-    private var minuteAngle = 0f
-    private val tickListener = Runnable {
-        updateTime()
-        invalidate()
-    }
-
-    init {
-        updateTime()
-    }
-
-    private fun updateTime() {
-        val cal = Calendar.getInstance()
-        val hour = cal.get(Calendar.HOUR)
-        val minute = cal.get(Calendar.MINUTE)
-        hourAngle = (hour + minute / 60f) * 30f
-        minuteAngle = minute * 6f
-        dateText = dateFormat.format(cal.time)
+    private val tickReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            invalidate()
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -69,6 +61,7 @@ class AnalogClockWidgetView @JvmOverloads constructor(
         tickPaint.color = secondaryColor
         hourPaint.color = primaryColor
         minutePaint.color = primaryColor
+        timePaint.color = primaryColor
         datePaint.color = secondaryColor
         val cx = width / 2f
         val cy = height / 2f
@@ -83,10 +76,17 @@ class AnalogClockWidgetView @JvmOverloads constructor(
             canvas.restore()
         }
 
+        val cal = Calendar.getInstance()
+        val hour = cal.get(Calendar.HOUR)
+        val minute = cal.get(Calendar.MINUTE)
+
+        // Date (upar) aur digital time (beech mein)
+        val dateText = SimpleDateFormat("EEE, d MMM", Locale.getDefault()).format(cal.time)
         canvas.drawText(dateText, cx, cy - r * 0.46f, datePaint)
 
-        drawHand(canvas, cx, cy, hourAngle, r * 0.50f, hourPaint)
-        drawHand(canvas, cx, cy, minuteAngle, r * 0.80f, minutePaint)
+        // Hands
+        drawHand(canvas, cx, cy, (hour + minute / 60f) * 30f, r * 0.50f, hourPaint)
+        drawHand(canvas, cx, cy, minute * 6f, r * 0.80f, minutePaint)
         dotPaint.color = accent
         canvas.drawCircle(cx, cy, 4f * density, dotPaint)
     }
@@ -100,13 +100,21 @@ class AnalogClockWidgetView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        TimeTicker.register(context, tickListener)
-        updateTime() // screen pe aate hi taaza time
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_TIME_TICK)
+            addAction(Intent.ACTION_TIME_CHANGED)
+            addAction(Intent.ACTION_TIMEZONE_CHANGED)
+        }
+        ContextCompat.registerReceiver(context, tickReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         invalidate()
     }
 
     override fun onDetachedFromWindow() {
-        TimeTicker.unregister(tickListener)
         super.onDetachedFromWindow()
+        try {
+            context.unregisterReceiver(tickReceiver)
+        } catch (e: IllegalArgumentException) {
+            // pehle se registered nahi tha
+        }
     }
 }

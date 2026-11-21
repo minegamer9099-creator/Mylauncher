@@ -34,9 +34,7 @@ class SuggestedAppsWidgetView @JvmOverloads constructor(
     private var lastTapIndex = -1
 
     fun setApps(list: List<AppInfo>, style: IconStyle) {
-        val newApps = list.take(4)
-        if (newApps == apps && icons.size == newApps.size) return // kuch badla nahi
-        apps = newApps
+        apps = list.take(4)
         // Drawable ki copy: bounds alag-alag jagah ke icons ko bigaade nahi
         icons = apps.map { app ->
             val d = style.drawableFor(app)

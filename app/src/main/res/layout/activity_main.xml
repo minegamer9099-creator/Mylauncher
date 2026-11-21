@@ -46,31 +46,17 @@
         android:layout_height="match_parent"
         android:visibility="gone">
 
-        <TextView
-            android:id="@+id/editDone"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="top|end"
-            android:layout_marginTop="12dp"
-            android:layout_marginEnd="20dp"
-            android:background="@drawable/bg_edit_pill"
-            android:paddingStart="20dp"
-            android:paddingTop="8dp"
-            android:paddingEnd="20dp"
-            android:paddingBottom="8dp"
-            android:text="Done"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp"
-            android:textStyle="bold" />
-
+        <!-- Edit mode ka toolbar (upar): dock neeche dikhta rehta hai taaki dock bhi customize ho sake -->
         <LinearLayout
+            android:id="@+id/editToolbar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_gravity="bottom"
+            android:layout_gravity="top"
+            android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:paddingBottom="28dp">
+            android:paddingStart="8dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="8dp">
 
             <LinearLayout
                 android:id="@+id/editWidgets"
@@ -81,28 +67,59 @@
                 android:focusable="true"
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
-                android:padding="6dp">
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp">
 
                 <ImageView
-                    android:layout_width="52dp"
-                    android:layout_height="52dp"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
                     android:background="@drawable/bg_edit_circle"
                     android:contentDescription="@null"
-                    android:padding="14dp"
+                    android:padding="10dp"
                     android:src="@android:drawable/ic_menu_agenda"
                     android:tint="#FFFFFF" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
+                    android:layout_marginTop="3dp"
                     android:gravity="center"
-                    android:maxLines="2"
+                    android:maxLines="1"
                     android:text="Widgets"
                     android:textColor="#FFFFFF"
-                    android:textSize="11sp" />
+                    android:textSize="10sp" />
             </LinearLayout>
+            <LinearLayout
+                android:id="@+id/editPages"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp">
 
+                <ImageView
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="@drawable/bg_edit_circle"
+                    android:contentDescription="@null"
+                    android:padding="10dp"
+                    android:src="@android:drawable/ic_menu_add"
+                    android:tint="#FFFFFF" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:gravity="center"
+                    android:maxLines="1"
+                    android:text="Pages"
+                    android:textColor="#FFFFFF"
+                    android:textSize="10sp" />
+            </LinearLayout>
             <LinearLayout
                 android:id="@+id/editWallpaper"
                 android:layout_width="0dp"
@@ -112,28 +129,28 @@
                 android:focusable="true"
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
-                android:padding="6dp">
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp">
 
                 <ImageView
-                    android:layout_width="52dp"
-                    android:layout_height="52dp"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
                     android:background="@drawable/bg_edit_circle"
                     android:contentDescription="@null"
-                    android:padding="14dp"
+                    android:padding="10dp"
                     android:src="@android:drawable/ic_menu_gallery"
                     android:tint="#FFFFFF" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
+                    android:layout_marginTop="3dp"
                     android:gravity="center"
-                    android:maxLines="2"
-                    android:text="Wallpapers &amp; style"
+                    android:maxLines="1"
+                    android:text="Wallpaper"
                     android:textColor="#FFFFFF"
-                    android:textSize="11sp" />
+                    android:textSize="10sp" />
             </LinearLayout>
-
             <LinearLayout
                 android:id="@+id/editLayout"
                 android:layout_width="0dp"
@@ -143,28 +160,28 @@
                 android:focusable="true"
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
-                android:padding="6dp">
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp">
 
                 <ImageView
-                    android:layout_width="52dp"
-                    android:layout_height="52dp"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
                     android:background="@drawable/bg_edit_circle"
                     android:contentDescription="@null"
-                    android:padding="14dp"
+                    android:padding="10dp"
                     android:src="@android:drawable/ic_menu_manage"
                     android:tint="#FFFFFF" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
+                    android:layout_marginTop="3dp"
                     android:gravity="center"
-                    android:maxLines="2"
+                    android:maxLines="1"
                     android:text="Layout"
                     android:textColor="#FFFFFF"
-                    android:textSize="11sp" />
+                    android:textSize="10sp" />
             </LinearLayout>
-
             <LinearLayout
                 android:id="@+id/editSettings"
                 android:layout_width="0dp"
@@ -174,27 +191,43 @@
                 android:focusable="true"
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
-                android:padding="6dp">
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp">
 
                 <ImageView
-                    android:layout_width="52dp"
-                    android:layout_height="52dp"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
                     android:background="@drawable/bg_edit_circle"
                     android:contentDescription="@null"
-                    android:padding="14dp"
+                    android:padding="10dp"
                     android:src="@android:drawable/ic_menu_preferences"
                     android:tint="#FFFFFF" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
+                    android:layout_marginTop="3dp"
                     android:gravity="center"
-                    android:maxLines="2"
-                    android:text="Home screen settings"
+                    android:maxLines="1"
+                    android:text="Settings"
                     android:textColor="#FFFFFF"
-                    android:textSize="11sp" />
+                    android:textSize="10sp" />
             </LinearLayout>
+
+            <TextView
+                android:id="@+id/editDone"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_edit_pill"
+                android:paddingStart="16dp"
+                android:paddingTop="8dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="8dp"
+                android:text="Done"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
         </LinearLayout>
     </FrameLayout>
 
@@ -350,10 +383,17 @@
         </LinearLayout>
     </FrameLayout>
 
-    <!-- App launch / return animation ka surface. Pehle se laga hota hai (invisible), taaki launch pe layout na ho. -->
+    <!-- App OPENING animation ka surface. Pehle se laga hota hai (invisible), taaki launch pe layout na ho. -->
     <com.example.mylauncher.LaunchOverlayView
         android:id="@+id/launchOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:visibility="invisible" />
+
+    <!-- Drag ke dauran ghost view (floating icon) yahan rehta hai: sabse upar, touch nahi leta -->
+    <FrameLayout
+        android:id="@+id/dragLayer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipChildren="false" />
 </FrameLayout>

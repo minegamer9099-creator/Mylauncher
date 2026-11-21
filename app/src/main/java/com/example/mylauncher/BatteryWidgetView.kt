@@ -22,7 +22,6 @@ class BatteryWidgetView @JvmOverloads constructor(
 
     private var percent = 100
     private var charging = false
-    private var percentText = "100%"
     private val oval = RectF()
 
     private val ringBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -57,21 +56,16 @@ class BatteryWidgetView @JvmOverloads constructor(
         if (intent == null) return
         val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
         val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
-        val newPercent = if (level >= 0 && scale > 0) level * 100 / scale else percent
+        if (level >= 0 && scale > 0) percent = level * 100 / scale
         val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-        val newCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+        charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
             status == BatteryManager.BATTERY_STATUS_FULL
-        // Battery broadcast bahut baar aata hai: kuch badla ho tabhi redraw
-        if (newPercent == percent && newCharging == charging) return
-        percent = newPercent
-        charging = newCharging
-        percentText = "$percent%"
         invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        ringBg.color = trackColor
+        ringBg.color = if (lightStyle) Color.parseColor("#26000000") else Color.parseColor("#33FFFFFF")
         percentPaint.color = primaryColor
         subPaint.color = secondaryColor
         val cx = width / 2f
@@ -81,11 +75,11 @@ class BatteryWidgetView @JvmOverloads constructor(
         oval.set(cx - r, cy - r, cx + r, cy + r)
         canvas.drawArc(oval, 0f, 360f, false, ringBg)
 
-        ringFg.color = if (percent <= 15 && !charging) LOW_BATTERY else accent
+        ringFg.color = if (percent <= 15 && !charging) Color.parseColor("#FF453A") else accent
         canvas.drawArc(oval, -90f, 360f * percent / 100f, false, ringFg)
 
         val baseline = cy - (percentPaint.ascent() + percentPaint.descent()) / 2f - 4f * density
-        canvas.drawText(percentText, cx, baseline, percentPaint)
+        canvas.drawText("$percent%", cx, baseline, percentPaint)
         canvas.drawText(if (charging) "Charging" else "Battery", cx, baseline + 18f * density, subPaint)
     }
 
@@ -106,9 +100,5 @@ class BatteryWidgetView @JvmOverloads constructor(
         } catch (e: IllegalArgumentException) {
             // pehle se registered nahi tha
         }
-    }
-
-    private companion object {
-        val LOW_BATTERY = Color.parseColor("#FF453A")
     }
 }

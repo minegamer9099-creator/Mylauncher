@@ -28,11 +28,6 @@ class NotesWidgetView @JvmOverloads constructor(
         textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 14f, resources.displayMetrics)
     }
 
-    // StaticLayout banana mehnga hai: text / width badle tabhi dobara banao (pehle har draw pe banta tha)
-    private var cachedLayout: StaticLayout? = null
-    private var cachedText = ""
-    private var cachedWidth = -1
-
     init {
         setOnClickListener { editNote() }
     }
@@ -48,7 +43,6 @@ class NotesWidgetView @JvmOverloads constructor(
             .setPositiveButton("Save") { _, _ ->
                 note = input.text.toString()
                 store.edit().putString(KEY, note).apply()
-                cachedLayout = null
                 invalidate()
             }
             .setNegativeButton("Cancel", null)
@@ -66,21 +60,12 @@ class NotesWidgetView @JvmOverloads constructor(
         val text = if (note.isEmpty()) "Tap karke note likho" else note
         if (note.isEmpty()) bodyPaint.color = secondaryColor
         val textWidth = (width - 2 * pad).toInt().coerceAtLeast(1)
-        val existing = cachedLayout
-        val layout: StaticLayout
-        if (existing != null && cachedText == text && cachedWidth == textWidth) {
-            layout = existing
-        } else {
-            layout = StaticLayout.Builder
-                .obtain(text, 0, text.length, bodyPaint, textWidth)
-                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                .setMaxLines(5)
-                .setEllipsize(android.text.TextUtils.TruncateAt.END)
-                .build()
-            cachedLayout = layout
-            cachedText = text
-            cachedWidth = textWidth
-        }
+        val layout = StaticLayout.Builder
+            .obtain(text, 0, text.length, bodyPaint, textWidth)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setMaxLines(5)
+            .setEllipsize(android.text.TextUtils.TruncateAt.END)
+            .build()
         canvas.save()
         canvas.translate(pad, pad + titlePaint.textSize + 10f * density)
         layout.draw(canvas)

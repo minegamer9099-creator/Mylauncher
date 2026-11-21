@@ -19,7 +19,6 @@ class AlphabetIndexView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     private val letters: List<Char> = ('A'..'Z').toList() + '#'
-    private val letterStrings: List<String> = letters.map { it.toString() } // draw mein toString() nahi
     private var activeIndex = -1
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -48,7 +47,7 @@ class AlphabetIndexView @JvmOverloads constructor(
         for (i in letters.indices) {
             paint.alpha = if (i == activeIndex) 255 else 150
             val baseline = cellHeight * i + cellHeight / 2f - (paint.ascent() + paint.descent()) / 2f
-            canvas.drawText(letterStrings[i], centerX, baseline, paint)
+            canvas.drawText(letters[i].toString(), centerX, baseline, paint)
         }
     }
 
