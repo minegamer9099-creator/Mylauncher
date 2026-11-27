@@ -162,7 +162,7 @@ internal fun MainActivity.showWidgetPicker() {
             addSystemWidget(info)
         })
         // Preview doosre app se decode hota hai: background mein, ek ek karke
-        bgExecutor.execute {
+        Background.io.execute {
             val d = try {
                 info.loadPreviewImage(this, 0) ?: info.loadIcon(this, 0)
             } catch (e: Exception) {
