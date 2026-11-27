@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Springs.kt: har view ke chal rahe spring animations yahan tag mein rehte hain -->
+    <item name="tag_springs" type="id" />
+</resources>

@@ -1,0 +1,11 @@
+# Baseline profile: install ke baad ART in classes / methods ko pehle se compile kar leta hai
+# (launcher ka pehla swipe / drawer open / edit mode interpreter ya JIT ki wajah se jank nahi karta).
+# Agar release build is file ki wajah se fail ho, to is file ko delete kar do.
+HSPLcom/example/mylauncher/**;->**(**)**
+Lcom/example/mylauncher/**;
+HSPLandroidx/recyclerview/**;->**(**)**
+Landroidx/recyclerview/**;
+HSPLandroidx/viewpager2/**;->**(**)**
+Landroidx/viewpager2/**;
+HSPLandroidx/dynamicanimation/**;->**(**)**
+Landroidx/dynamicanimation/**;

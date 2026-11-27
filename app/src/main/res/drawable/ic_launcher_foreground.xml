@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple 4-square grid icon -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#7C9CFF" android:pathData="M32,32h18v18h-18z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M58,32h18v18h-18z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M32,58h18v18h-18z" />
+    <path android:fillColor="#7C9CFF" android:pathData="M58,58h18v18h-18z" />
+</vector>
