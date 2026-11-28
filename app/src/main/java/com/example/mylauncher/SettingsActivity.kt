@@ -57,6 +57,11 @@ class SettingsActivity : AppCompatActivity() {
         if (uri != null) setWallpaperFromUri(uri)
     }
 
+    override fun onResume() {
+        super.onResume()
+        requestHighRefreshRate()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)

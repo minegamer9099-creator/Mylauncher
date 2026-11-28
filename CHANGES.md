@@ -1,3 +1,11 @@
+# Drawer close glitch + 120Hz
+- Drawer close: `searchBar.setText("")` (list rebuild + `scrollToPosition(0)`) slide-down ke dauran chalta tha, list achanak
+  upar kood jati thi. Ab search/list reset drawer chhupne ke BAAD hota hai (`resetDrawerContent`).
+- Drawer pe hardware layer hata (sirf translation animate hoti hai; layer banana pehle frame mein hitch deta tha).
+- 120Hz: `RefreshRate.kt` panel ka sabse tez mode (same resolution) `preferredDisplayModeId` + `preferredRefreshRate` se maangta hai.
+  Pehle sirf `preferredRefreshRate = 120f` ek baar lagta tha. Ab onResume + onWindowFocusChanged (Launcher) aur Settings onResume mein.
+- Fix: HomePanels `bgExecutor` -> `Background.io`.
+
 # Smoother + more optimised (round 3)
 - Baseline profile (`baseline-prof.txt` + `profileinstaller`): app code install ke baad AOT-compile, pehle use mein jank kam.
   (Release build isse fail ho to is file ko delete karo.)

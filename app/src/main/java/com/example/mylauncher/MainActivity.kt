@@ -297,9 +297,16 @@ class MainActivity : AppCompatActivity() {
         widgetHost.start() // widgets ke updates sirf tab jab launcher dikh raha ho
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Focus milne par system refresh mode badal sakta hai (app switch ke baad): 120Hz dobara maango
+        if (hasFocus) requestHighRefreshRate()
+    }
+
     override fun onResume() {
         super.onResume()
         resumed = true
+        requestHighRefreshRate()
         checkUnlockOnResume()
 
         // Settings se wapas aaye? To badli hui settings apply karo
@@ -1056,10 +1063,8 @@ class MainActivity : AppCompatActivity() {
         drawerContainer.cancelSprings()
         drawerContainer.translationY = screenHeight()
         drawerContainer.visibility = View.VISIBLE
-        drawerContainer.setLayerType(View.LAYER_TYPE_HARDWARE, null) // animation ke dauran ek texture, baad mein hata do
-        drawerContainer.springTranslationY(0f, 420f, 0.88f) {
-            drawerContainer.setLayerType(View.LAYER_TYPE_NONE, null)
-        }
+        // Sirf translation animate hoti hai: layer ki zaroorat nahi (layer banana pehle frame mein hitch deta tha)
+        drawerContainer.springTranslationY(0f, 420f, 0.88f)
 
         homeContainer.cancelSprings()
         homeContainer.setLayerType(View.LAYER_TYPE_HARDWARE, null)
@@ -1083,17 +1088,19 @@ class MainActivity : AppCompatActivity() {
 
         getSystemService(InputMethodManager::class.java)
             .hideSoftInputFromWindow(searchBar.windowToken, 0)
-        searchBar.setText("")
         searchBar.clearFocus()
+        // Search text / list reset yahan nahi: setText("") list rebuild + scrollToPosition(0) karta tha, yani
+        // slide-down ke dauran list achanak upar kood jati thi (glitch). Drawer chhup jaye tab reset hota hai.
 
         drawerContainer.cancelSprings()
         homeContainer.cancelSprings()
         if (animated) {
-            // Drawer neeche jata hai (bina bounce), home bouncy spring se wapas apni jagah
-            drawerContainer.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            // Drawer neeche jata hai (bina bounce, bina layer), home bouncy spring se wapas apni jagah
             drawerContainer.springTranslationY(screenHeight(), 520f, Springs.DAMPING_SMOOTH) {
-                drawerContainer.setLayerType(View.LAYER_TYPE_NONE, null)
-                if (!drawerOpen) drawerContainer.visibility = View.GONE
+                if (!drawerOpen) {
+                    drawerContainer.visibility = View.GONE
+                    resetDrawerContent()
+                }
             }
             homeContainer.setLayerType(View.LAYER_TYPE_HARDWARE, null)
             homeContainer.springAlpha(1f, Springs.STIFF_MEDIUM)
@@ -1101,12 +1108,21 @@ class MainActivity : AppCompatActivity() {
                 homeContainer.setLayerType(View.LAYER_TYPE_NONE, null)
             }
         } else {
-            drawerContainer.setLayerType(View.LAYER_TYPE_NONE, null)
             homeContainer.setLayerType(View.LAYER_TYPE_NONE, null)
             drawerContainer.visibility = View.GONE
             homeContainer.alpha = 1f
             homeContainer.scaleX = 1f
             homeContainer.scaleY = 1f
+            resetDrawerContent()
+        }
+    }
+
+    /** Drawer chhupne ke baad: search text saaf + list top pe (screen pe nahi dikhta, isliye glitch nahi). */
+    private fun resetDrawerContent() {
+        if (searchBar.text.isNotEmpty()) {
+            searchBar.setText("") // TextWatcher refreshDrawerList() bulata hai (scroll bhi top pe)
+        } else {
+            drawerRecycler.scrollToPosition(0)
         }
     }
 

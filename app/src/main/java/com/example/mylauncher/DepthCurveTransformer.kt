@@ -120,9 +120,7 @@ class DepthCurveTransformer(
          * device, panel (LTPO), battery saver aur system policy decide karte hain.
          */
         fun requestHighRefreshRate(activity: Activity) {
-            val attrs = activity.window.attributes
-            attrs.preferredRefreshRate = 120f
-            activity.window.attributes = attrs
+            activity.requestHighRefreshRate() // RefreshRate.kt: asli panel mode (preferredDisplayModeId) maangta hai
         }
     }
 }
